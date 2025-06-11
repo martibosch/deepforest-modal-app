@@ -18,20 +18,24 @@ KwargsType = Mapping | None
 # TODO: use shared config data class? e.g., see
 # https://modal.com/docs/examples/diffusers_lora_finetune
 
-
+# GPU type
 GPU_TYPE = "H100"
 
-# create Modal image with required dependencies
-MODELS_DIR = "/cache"
-cache_volume = modal.Volume.from_name("hf-hub-cache", create_if_missing=True)
+# volume to store models, i.e., (i) HuggingFace Hub cache, (ii) PyTorch hub cache and
+# (iii) our deepforest checkpoints
+MODELS_DIR = "/models"
+models_volume = modal.Volume.from_name("models", create_if_missing=True)
+DEEPFOREST_MODELS_DIR = path.join(MODELS_DIR, "deepforest")
 
-# path to base project directory
+# volume to store data (images, annotations, etc.)
 # REMOTE_IMAGES_DIR = path.join("/root/images")
 DATA_DIR = "/data"
 data_volume = modal.Volume.from_name("data", create_if_missing=True)
 # with data_volume.batch_upload() as batch:
 #     batch.put_directory(LOCAL_DATA_DIR, ".")
 
+
+# create Modal image with required dependencies
 app = modal.App(name="deepforest")
 image = (
     modal.Image.micromamba("3.11")
@@ -44,7 +48,12 @@ image = (
         "albumentations==1.4.24",
         "deepforest==1.5.2",
     )
-    .env({"HF_HUB_CACHE": MODELS_DIR})
+    .env(
+        {
+            "HF_HUB_CACHE": path.join(MODELS_DIR, "hf_hub_cache"),
+            "TORCH_HOME": path.join(MODELS_DIR, "torch"),
+        }
+    )
     # .add_local_dir(LOCAL_DATA_DIR, remote_path=DATA_DIR)
 )
 
@@ -60,7 +69,12 @@ with image.imports():
 
 
 @app.cls(
-    image=image, gpu=GPU_TYPE, volumes={MODELS_DIR: cache_volume, DATA_DIR: data_volume}
+    image=image,
+    gpu=GPU_TYPE,
+    volumes={
+        MODELS_DIR: models_volume,
+        DATA_DIR: data_volume,
+    },
 )
 class DeepForestApp:
     """DeepForest app.
@@ -98,7 +112,9 @@ class DeepForestApp:
         _ = torch.manual_seed(self.torch_seed)
         if self.checkpoint_filename != "":
             # TODO: how does this affect build time?
-            checkpoint_filepath = path.join(MODELS_DIR, self.checkpoint_filename)
+            checkpoint_filepath = path.join(
+                DEEPFOREST_MODELS_DIR, self.checkpoint_filename
+            )
             print(f"Loading model from checkpoint: {checkpoint_filepath}")
 
             model = deepforest_main.deepforest.load_from_checkpoint(
@@ -106,8 +122,12 @@ class DeepForestApp:
             )
         else:
             # load the default release checkpoint
+            print(os.getenv("TORCH_HOME"))
+            from torch.hub import get_dir
+
+            print(get_dir())
             model = deepforest_main.deepforest()
-            model.load_model(model_name=self.model_name)
+            model.load_model(model_name=self.model_name, revision=self.model_revision)
         if self.config_filepath == "":
             # by default, use all available GPUs and 4 workers
             self.config_dict = {"gpus": -1, "workers": 4}
@@ -130,6 +150,7 @@ class DeepForestApp:
         train_config: Mapping | None = None,
         validation_config: Mapping | None = None,
         dst_filename: str | None = None,
+        retrain_if_exists: bool = False,
         **create_trainer_kwargs: KwargsType,
     ) -> None:  # deepforest_main.deepforest:
         """Retrain the DeepForest model with the provided training data.
@@ -153,7 +174,22 @@ class DeepForestApp:
         dst_filename : str, optional
             Name of the file to save the retrained model to. If not provided, a file
             name will be generated based on the current timestamp.
+        retrain_if_exists : bool, default False
+            If True, the model will be retrained even if a checkpoint with the file name
+            provided as `dst_filename` already exists and subsequently overwritten.
+            If False, no retraining will be done if the checkpoint already exists.
+        **create_trainer_kwargs : dict-like
+            Additional keyword arguments to pass to the model's `create_trainer` method.
         """
+        if not retrain_if_exists and dst_filename is not None:
+            # check if the checkpoint file already exists
+            dst_filepath = path.join(DEEPFOREST_MODELS_DIR, dst_filename)
+            if path.exists(dst_filepath):
+                print(
+                    f"Checkpoint {dst_filepath} already exists, skipping"
+                    " retraining. Use `retrain_if_exists=True` to overwrite."
+                )
+                return dst_filepath
 
         def save_annot_df(annot_df, dst_filepath):
             """Save the annotated data frame."""
@@ -162,7 +198,7 @@ class DeepForestApp:
             return dst_filepath
 
         if checkpoint_filename is not None:
-            checkpoint_filepath = path.join(MODELS_DIR, checkpoint_filename)
+            checkpoint_filepath = path.join(DEEPFOREST_MODELS_DIR, checkpoint_filename)
             print(f"Loading model from checkpoint: {checkpoint_filepath}")
             model = deepforest_main.deepforest.load_from_checkpoint(
                 checkpoint_filepath,
@@ -207,7 +243,7 @@ class DeepForestApp:
         # self.model = model
         if dst_filename is None:
             dst_filename = f"deepforest-retrained-{time.strftime('%Y%m%d_%H%M%S')}.pl"
-        dst_filepath = path.join(MODELS_DIR, dst_filename)
+        dst_filepath = path.join(DEEPFOREST_MODELS_DIR, dst_filename)
         # model.save_model(dst_filepath)
         model.trainer.save_checkpoint(dst_filepath)
         print(f"Saved checkpoint to {dst_filepath}")
@@ -258,13 +294,13 @@ class DeepForestApp:
             Predicted bounding boxes with tree crown annotations.
         """
         if checkpoint_filename is not None:
-            checkpoint_filepath = path.join(MODELS_DIR, checkpoint_filename)
+            checkpoint_filepath = path.join(DEEPFOREST_MODELS_DIR, checkpoint_filename)
             print(f"Loading model from checkpoint: {checkpoint_filepath}")
             model = deepforest_main.deepforest.load_from_checkpoint(checkpoint_filepath)
         else:
             model = self.model
         if crop_model_filename is not None:
-            crop_model_filepath = path.join(MODELS_DIR, crop_model_filename)
+            crop_model_filepath = path.join(DEEPFOREST_MODELS_DIR, crop_model_filename)
             print(f"Loading crop model from checkpoint: {crop_model_filepath}")
             crop_model = deepforest_model.CropModel.load_from_checkpoint(
                 crop_model_filepath, num_classes=crop_model_num_classes
@@ -289,8 +325,10 @@ class DeepForestApp:
         train_df: pd.DataFrame | gpd.GeoDataFrame,
         remote_img_dir: PathType,
         *,
+        test_df: pd.DataFrame | gpd.GeoDataFrame | None = None,
+        max_epochs: int = 20,
         dst_filename: str | None = None,
-        max_epochs: int = 10,
+        retrain_if_exists: bool = False,
         **create_trainer_kwargs: KwargsType,
     ) -> None:
         """Train a crop model.
@@ -302,15 +340,49 @@ class DeepForestApp:
             "label" column) bounding box annotations.
         remote_img_dir : PathType
             Path to the remote directory with images, relative to the data volume root.
+        test_df : pd.DataFrame or gpd.GeoDataFrame, optional
+            Test data to use for validation during training. If not provided, training
+            will be performed without validation.
+        max_epochs : int, optional
+            Maximum number of epochs to train the model for. Default is 20.
         dst_filename : str, optional
             Name of the file to save the retrained model to. If not provided, a file
             name will be generated based on the current timestamp.
-        max_epochs : int, optional
-            Maximum number of epochs to train the model for. Default is 10.
+        retrain_if_exists : bool, default False
+            If True, the model will be retrained even if a checkpoint with the file name
+            provided as `dst_filename` already exists and subsequently overwritten.
+            If False, no retraining will be done if the checkpoint already exists.
         **create_trainer_kwargs : dict-like
             Additional (besides `max_epochs`) keyword arguments to pass to the model's
             `create_trainer` method.
         """
+        if not retrain_if_exists and dst_filename is not None:
+            # check if the checkpoint file already exists
+            dst_filepath = path.join(DEEPFOREST_MODELS_DIR, dst_filename)
+            if path.exists(dst_filepath):
+                print(
+                    f"Checkpoint {dst_filepath} already exists, skipping"
+                    " retraining. Use `retrain_if_exists=True` to overwrite."
+                )
+                return dst_filepath
+
+        # TODO: do NOT uncumment the code below until the following commit is released
+        # github.com/weecology/DeepForest/b99d068be36da4d995931d7d4905bce251530a0f
+        # provide a label dict containing all the keys from both the train and test
+        # data frames
+        # labels = set(train_df["label"].unique())
+        # if test_df is not None:
+        #     labels.update(test_df["label"].unique())
+        # label_dict = {label: i for i, label in enumerate(sorted(labels))}
+        # crop_model = deepforest_model.CropModel(
+        #     num_classes=len(label_dict), label_dict=label_dict
+        # )
+        # ACHTUNG: in the meantime (see TODO above), use all the data for training,
+        # namely train and test data frames to ensure that we have all the labels in the
+        # label dict
+        # TODO: how to handle the case where not all labels are on the training set?
+        # e.g., raise a ValueError?
+        train_df = pd.concat([train_df, test_df]) if test_df is not None else train_df
         crop_model = deepforest_model.CropModel(num_classes=train_df["label"].nunique())
         # create trainer
         _create_trainer_kwargs = create_trainer_kwargs.copy()
@@ -318,23 +390,30 @@ class DeepForestApp:
             _ = _create_trainer_kwargs.pop("max_epochs")
         crop_model.create_trainer(max_epochs=max_epochs, **_create_trainer_kwargs)
 
-        with tempfile.TemporaryDirectory() as tmp_dir:
+        def write_crops(annot_df, dst_dir):
             crop_model.write_crops(
                 path.join(DATA_DIR, remote_img_dir),
-                train_df["image_path"].values,
-                train_df[["xmin", "ymin", "xmax", "ymax"]].values,
-                train_df["label"].values,
-                tmp_dir,
+                annot_df["image_path"].values,
+                annot_df[["xmin", "ymin", "xmax", "ymax"]].values,
+                annot_df["label"].values,
+                dst_dir,
             )
-            # the second argument should be a directory with data for evaluation but we
-            # do not have that yet
-            crop_model.load_from_disk(train_dir=tmp_dir, val_dir=tmp_dir)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            train_dir = path.join(tmp_dir, "train")
+            test_dir = path.join(tmp_dir, "test")
+            for _dir in [train_dir, test_dir]:
+                os.makedirs(_dir, exist_ok=True)
+            write_crops(train_df, train_dir)
+            if test_df is not None:
+                write_crops(test_df, test_dir)
+            crop_model.load_from_disk(train_dir=train_dir, val_dir=test_dir)
             crop_model.trainer.fit(crop_model)
 
         # self.model = model
         if dst_filename is None:
             dst_filename = f"crop-{time.strftime('%Y%m%d_%H%M%S')}.pl"
-        dst_filepath = path.join(MODELS_DIR, dst_filename)
+        dst_filepath = path.join(DEEPFOREST_MODELS_DIR, dst_filename)
         # model.save_model(dst_filepath)
         crop_model.trainer.save_checkpoint(dst_filepath)
         print(f"Saved checkpoint to {dst_filepath}")
