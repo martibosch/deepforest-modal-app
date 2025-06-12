@@ -1,5 +1,6 @@
 """Modal app for DeepForest model training and inference."""
 
+import glob
 import json
 import os
 from collections.abc import Mapping
@@ -452,16 +453,24 @@ def upload_file(
 
 @app.local_entrypoint()
 def ensure_imgs(
-    imgs_filepath: str, local_img_dir: str, *, remote_img_dir: Optional[str] = None
+    local_img_dir: str,
+    *,
+    imgs_filepath: Optional[str] = None,
+    remote_img_dir: Optional[str] = None,
 ) -> None:
     """Ensure that images exist in the data volume, otherwise upload them.
 
     Parameters
     ----------
-    imgs_filepath : str
-        Path to a JSON file containing a list of image filenames to ensure.
     local_img_dir : str
-        Path to the local directory containing the images.
+        Path to the local directory containing the images. If `imgs_filepath` is not
+        provided, all files in this directory will be uploaded (if not already in the
+        data volume). Otherwise only the images listed in `imgs_filepath` will be
+        uploaded.
+    imgs_filepath : str, optional
+        Path to a JSON file containing a list of image filenames to ensure. If not
+        provided, all files in `local_img_dir` will be uploaded (if not already in
+        the data volume).
     remote_img_dir : str, optional
         Directory in the data volume where the images should be uploaded. If not
         provided, it will be set to the base name of `local_img_dir`.
@@ -470,9 +479,15 @@ def ensure_imgs(
         # use the directory name of `local_img_dir`
         remote_img_dir = path.basename(local_img_dir)
 
-    with open(imgs_filepath, encoding="utf-8") as src:
-        img_filenames = json.load(src)
-    if not img_filenames:
+    if imgs_filepath is None:
+        img_filenames = [
+            path.basename(img_filepath)
+            for img_filepath in glob.glob(path.join(local_img_dir, "*"))
+        ]
+    else:
+        with open(imgs_filepath, encoding="utf-8") as src:
+            img_filenames = json.load(src)
+    if len(img_filenames) == 0:
         raise ValueError("No image filenames provided in the arguments.")
 
     # data_volume.reload()  # fetch latest changes
