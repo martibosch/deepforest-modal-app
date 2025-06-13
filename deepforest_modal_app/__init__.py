@@ -426,7 +426,7 @@ class DeepForestApp:
                 path.join(settings.DATA_DIR, remote_img_dir),
                 annot_df["image_path"].values,
                 annot_df[["xmin", "ymin", "xmax", "ymax"]].values,
-                annot_df["label"].values,
+                annot_df["label"].values.astype(str),
                 dst_dir,
             )
 
