@@ -10,34 +10,30 @@ from typing import Optional
 import modal
 from grpclib import GRPCError
 
+from deepforest_modal_app import settings
+
 # type annotations
 # type hint for path-like objects
 PathType = str | os.PathLike
 # type hint for keyword arguments
 KwargsType = Mapping | None
 
-# TODO: use shared config data class? e.g., see
-# https://modal.com/docs/examples/diffusers_lora_finetune
-
-# GPU type
-GPU_TYPE = "H100"
 
 # volume to store models, i.e., (i) HuggingFace Hub cache, (ii) PyTorch hub cache and
 # (iii) our deepforest checkpoints
-MODELS_DIR = "/models"
-models_volume = modal.Volume.from_name("models", create_if_missing=True)
-DEEPFOREST_MODELS_DIR = path.join(MODELS_DIR, "deepforest")
+models_volume = modal.Volume.from_name(
+    settings.MODELS_VOLUME_NAME, create_if_missing=True
+)
 
 # volume to store data (images, annotations, etc.)
 # REMOTE_IMAGES_DIR = path.join("/root/images")
-DATA_DIR = "/data"
-data_volume = modal.Volume.from_name("data", create_if_missing=True)
+data_volume = modal.Volume.from_name(settings.DATA_VOLUME_NAME, create_if_missing=True)
 # with data_volume.batch_upload() as batch:
 #     batch.put_directory(LOCAL_DATA_DIR, ".")
 
 
 # create Modal image with required dependencies
-app = modal.App(name="deepforest")
+app = modal.App(name=settings.APP_NAME)
 image = (
     modal.Image.micromamba("3.11")
     .micromamba_install(
@@ -51,8 +47,8 @@ image = (
     )
     .env(
         {
-            "HF_HUB_CACHE": path.join(MODELS_DIR, "hf_hub_cache"),
-            "TORCH_HOME": path.join(MODELS_DIR, "torch"),
+            "HF_HUB_CACHE": path.join(settings.MODELS_DIR, "hf_hub_cache"),
+            "TORCH_HOME": path.join(settings.MODELS_DIR, "torch"),
         }
     )
     # .add_local_dir(LOCAL_DATA_DIR, remote_path=DATA_DIR)
@@ -71,10 +67,10 @@ with image.imports():
 
 @app.cls(
     image=image,
-    gpu=GPU_TYPE,
+    gpu=settings.GPU_TYPE,
     volumes={
-        MODELS_DIR: models_volume,
-        DATA_DIR: data_volume,
+        settings.MODELS_DIR: models_volume,
+        settings.DATA_DIR: data_volume,
     },
 )
 class DeepForestApp:
@@ -114,7 +110,7 @@ class DeepForestApp:
         if self.checkpoint_filename != "":
             # TODO: how does this affect build time?
             checkpoint_filepath = path.join(
-                DEEPFOREST_MODELS_DIR, self.checkpoint_filename
+                settings.MODELS_DIR, self.checkpoint_filename
             )
             print(f"Loading model from checkpoint: {checkpoint_filepath}")
 
@@ -123,10 +119,6 @@ class DeepForestApp:
             )
         else:
             # load the default release checkpoint
-            print(os.getenv("TORCH_HOME"))
-            from torch.hub import get_dir
-
-            print(get_dir())
             model = deepforest_main.deepforest()
             model.load_model(model_name=self.model_name, revision=self.model_revision)
         if self.config_filepath == "":
@@ -184,7 +176,7 @@ class DeepForestApp:
         """
         if not retrain_if_exists and dst_filename is not None:
             # check if the checkpoint file already exists
-            dst_filepath = path.join(DEEPFOREST_MODELS_DIR, dst_filename)
+            dst_filepath = path.join(settings.MODELS_DIR, dst_filename)
             if path.exists(dst_filepath):
                 print(
                     f"Checkpoint {dst_filepath} already exists, skipping"
@@ -199,7 +191,7 @@ class DeepForestApp:
             return dst_filepath
 
         if checkpoint_filename is not None:
-            checkpoint_filepath = path.join(DEEPFOREST_MODELS_DIR, checkpoint_filename)
+            checkpoint_filepath = path.join(settings.MODELS_DIR, checkpoint_filename)
             print(f"Loading model from checkpoint: {checkpoint_filepath}")
             model = deepforest_main.deepforest.load_from_checkpoint(
                 checkpoint_filepath,
@@ -220,7 +212,7 @@ class DeepForestApp:
             model.config["validation"][key] = value
 
         # prepend volume path to the remote image directory
-        remote_img_dir = path.join(DATA_DIR, remote_img_dir)
+        remote_img_dir = path.join(settings.DATA_DIR, remote_img_dir)
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             # save training data to a temporary file
@@ -244,7 +236,7 @@ class DeepForestApp:
         # self.model = model
         if dst_filename is None:
             dst_filename = f"deepforest-retrained-{time.strftime('%Y%m%d_%H%M%S')}.pl"
-        dst_filepath = path.join(DEEPFOREST_MODELS_DIR, dst_filename)
+        dst_filepath = path.join(settings.MODELS_DIR, dst_filename)
         # model.save_model(dst_filepath)
         model.trainer.save_checkpoint(dst_filepath)
         print(f"Saved checkpoint to {dst_filepath}")
@@ -295,13 +287,13 @@ class DeepForestApp:
             Predicted bounding boxes with tree crown annotations.
         """
         if checkpoint_filename is not None:
-            checkpoint_filepath = path.join(DEEPFOREST_MODELS_DIR, checkpoint_filename)
+            checkpoint_filepath = path.join(settings.MODELS_DIR, checkpoint_filename)
             print(f"Loading model from checkpoint: {checkpoint_filepath}")
             model = deepforest_main.deepforest.load_from_checkpoint(checkpoint_filepath)
         else:
             model = self.model
         if crop_model_filename is not None:
-            crop_model_filepath = path.join(DEEPFOREST_MODELS_DIR, crop_model_filename)
+            crop_model_filepath = path.join(settings.MODELS_DIR, crop_model_filename)
             print(f"Loading crop model from checkpoint: {crop_model_filepath}")
             crop_model = deepforest_model.CropModel.load_from_checkpoint(
                 crop_model_filepath, num_classes=crop_model_num_classes
@@ -313,7 +305,7 @@ class DeepForestApp:
             f"overlap {patch_overlap}, and IOU threshold {iou_threshold}."
         )
         return model.predict_tile(
-            path.join(DATA_DIR, remote_img_dir, img_filename),
+            path.join(settings.DATA_DIR, remote_img_dir, img_filename),
             patch_size=patch_size,
             patch_overlap=patch_overlap,
             iou_threshold=iou_threshold,
@@ -359,7 +351,7 @@ class DeepForestApp:
         """
         if not retrain_if_exists and dst_filename is not None:
             # check if the checkpoint file already exists
-            dst_filepath = path.join(DEEPFOREST_MODELS_DIR, dst_filename)
+            dst_filepath = path.join(settings.MODELS_DIR, dst_filename)
             if path.exists(dst_filepath):
                 print(
                     f"Checkpoint {dst_filepath} already exists, skipping"
@@ -393,7 +385,7 @@ class DeepForestApp:
 
         def write_crops(annot_df, dst_dir):
             crop_model.write_crops(
-                path.join(DATA_DIR, remote_img_dir),
+                path.join(settings.DATA_DIR, remote_img_dir),
                 annot_df["image_path"].values,
                 annot_df[["xmin", "ymin", "xmax", "ymax"]].values,
                 annot_df["label"].values,
@@ -414,7 +406,7 @@ class DeepForestApp:
         # self.model = model
         if dst_filename is None:
             dst_filename = f"crop-{time.strftime('%Y%m%d_%H%M%S')}.pl"
-        dst_filepath = path.join(DEEPFOREST_MODELS_DIR, dst_filename)
+        dst_filepath = path.join(settings.MODELS_DIR, dst_filename)
         # model.save_model(dst_filepath)
         crop_model.trainer.save_checkpoint(dst_filepath)
         print(f"Saved checkpoint to {dst_filepath}")
