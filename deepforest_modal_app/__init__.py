@@ -8,6 +8,7 @@ from os import path
 from typing import Optional
 
 import modal
+import rasterio as rio
 from grpclib import GRPCError
 
 from deepforest_modal_app import settings
@@ -251,9 +252,9 @@ class DeepForestApp:
         checkpoint_filename: str | None = None,
         crop_model_filename: str | None = None,
         crop_model_num_classes: int | None = None,
-        patch_size: int = 400,
-        patch_overlap: float = 0.05,
         iou_threshold: float = 0.15,
+        patch_size: int | None = None,
+        patch_overlap: float | None = None,
     ) -> gpd.GeoDataFrame:
         """Predict tree crown bounding boxes using the a DeepForest-like model.
 
@@ -273,13 +274,19 @@ class DeepForestApp:
         crop_model_num_classes : int, optional
             Number of classes for the crop model. Required if `crop_model_filename` is
             provided, ignored otherwise.
-        patch_size : int, optional
-            Size of the window to use for prediction, in pixels. Default is 400.
-        patch_overlap : float, optional
-            Overlap between windows, as a fraction of the patch size. Default is 0.05.
         iou_threshold : float, optional
             Minimum Intersection over Union (IoU) overlap threshold for among
             predictions between windows to be suppressed. Default is 0.15.
+        patch_size : int, optional
+            Size of the window to use for prediction, in pixels. If not provided, the
+            behaviour depends on how the image size compares to
+            `settings.MAX_IMAGE_SIZE`, i.e., if smaller, the whole image will be
+            used for prediction; whereas if larger, the image will be split into
+            (square) tiles of size `settings.MAX_IMAGE_SIZE` for prediction.
+        patch_overlap : float, optional
+            Overlap between windows, as a fraction of the patch size. Ignored if the
+            image is not split into tiles (depending on the image size and the provided
+            `patch_size`, see the description of the `patch_size` argument above).
 
         Returns
         -------
@@ -300,12 +307,35 @@ class DeepForestApp:
             )
         else:
             crop_model = None
-        print(
-            f"Predicting on {img_filename} with patch size {patch_size}, "
-            f"overlap {patch_overlap}, and IOU threshold {iou_threshold}."
-        )
+
+        img_filepath = path.join(settings.DATA_DIR, remote_img_dir, img_filename)
+        log_msg = f"Predicting on {img_filename} with"
+        if patch_size is None:
+            # if no `patch_size` is provided, check if the image is large
+            with rio.open(img_filepath) as src:
+                max_size = max(src.width, src.height)
+                if max_size > settings.MAX_IMG_SIZE:
+                    # the image is large, use default patch size
+                    patch_size = settings.DEFAULT_PATCH_SIZE
+                    if patch_overlap is None:
+                        # use default overlap if not provided
+                        patch_overlap = settings.DEFAULT_PATCH_OVERLAP
+                    log_msg += f" patch size {patch_size}, overlap {patch_overlap} and "
+                else:
+                    # the image is small, use the whole image
+                    patch_size = max_size
+                    patch_overlap = 0
+        else:
+            # a patch size is provided, use it
+            if patch_overlap is None:
+                # use default overlap if not provided
+                patch_overlap = settings.DEFAULT_PATCH_OVERLAP
+            log_msg += f" patch size {patch_size}, overlap {patch_overlap} and "
+
+        log_msg = f" IOU threshold {iou_threshold}."
+        print(log_msg)
         return model.predict_tile(
-            path.join(settings.DATA_DIR, remote_img_dir, img_filename),
+            img_filepath,
             patch_size=patch_size,
             patch_overlap=patch_overlap,
             iou_threshold=iou_threshold,

@@ -22,7 +22,8 @@ classifiers = [
 requires-python = ">=3.10"
 dependencies = [
   "modal",
-  "geopandas >= 1.0.0"
+  "geopandas >= 1.0.0",
+  "rasterio >= 1.0.0"
 ]
 
 [project.license]

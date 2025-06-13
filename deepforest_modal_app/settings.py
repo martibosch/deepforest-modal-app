@@ -14,3 +14,11 @@ DATA_DIR = "/data"
 
 # app
 APP_NAME = "deepforest"
+
+# model args
+# maximum image size after which we will split the image into tiles using the
+# `patch_size` argument of `predict_tile`
+MAX_IMG_SIZE = 2000
+# if a patch size must be used, use these defaults (from `deepforest.main.predict_tile`)
+DEFAULT_PATCH_SIZE = 400
+DEFAULT_PATCH_OVERLAP = 0.05
