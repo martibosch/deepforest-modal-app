@@ -114,11 +114,10 @@ class DeepForestApp:
             checkpoint_filepath = path.join(
                 settings.MODELS_DIR, self.checkpoint_filepath
             )
-            print(f"Loading model from checkpoint: {checkpoint_filepath}")
-
             model = deepforest_main.deepforest.load_from_checkpoint(
                 checkpoint_filepath,
             )
+            print(f"Loaded model from checkpoint: {checkpoint_filepath}")
         else:
             # load the default release checkpoint
             model = deepforest_main.deepforest()
@@ -197,10 +196,10 @@ class DeepForestApp:
 
         if checkpoint_filepath is not None:
             _checkpoint_filepath = path.join(settings.MODELS_DIR, checkpoint_filepath)
-            print(f"Loading model from checkpoint: {_checkpoint_filepath}")
             model = deepforest_main.deepforest.load_from_checkpoint(
                 _checkpoint_filepath,
             )
+            print(f"Loaded model from checkpoint: {_checkpoint_filepath}")
         else:
             model = self.model
 
@@ -235,7 +234,7 @@ class DeepForestApp:
             model.create_trainer(**create_trainer_kwargs)
             start_time = time.time()
             model.trainer.fit(model)
-        print(f"--- Model retrained in {(time.time() - start_time):.2f} seconds ---")
+        print(f"Model retrained in {(time.time() - start_time):.2f} seconds.")
 
         # TODO: replace model attribute with the trained model?
         # self.model = model
@@ -301,18 +300,18 @@ class DeepForestApp:
         """
         if checkpoint_filepath is not None:
             _checkpoint_filepath = path.join(settings.MODELS_DIR, checkpoint_filepath)
-            print(f"Loading model from checkpoint: {_checkpoint_filepath}")
             model = deepforest_main.deepforest.load_from_checkpoint(
                 _checkpoint_filepath
             )
+            print(f"Loaded model from checkpoint: {_checkpoint_filepath}")
         else:
             model = self.model
         if crop_model_filepath is not None:
             _crop_model_filepath = path.join(settings.MODELS_DIR, crop_model_filepath)
-            print(f"Loading crop model from checkpoint: {_crop_model_filepath}")
             crop_model = deepforest_model.CropModel.load_from_checkpoint(
                 _crop_model_filepath, num_classes=crop_model_num_classes
             )
+            print(f"Loaded crop model from checkpoint: {_crop_model_filepath}")
         else:
             crop_model = None
 
@@ -544,3 +543,4 @@ def ensure_imgs(
             for img_filename in imgs_to_upload:
                 src_filepath = path.join(local_img_dir, img_filename)
                 batch.put_file(src_filepath, path.join(remote_img_dir, img_filename))
+        print("Upload completed.")
