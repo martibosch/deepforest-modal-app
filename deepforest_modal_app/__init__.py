@@ -81,12 +81,13 @@ class DeepForestApp:
     ----------
     model_name : str
         Name of the model to load from Hugging Face Hub. Ignored if
-        `checkpoint_filename` is provided.
+        `checkpoint_filepath` is provided.
     model_revision : str
         Revision of the model to load from Hugging Face Hub. Ignored if
-        `checkpoint_filename` is provided.
-    checkpoint_filename : str
-        Name of the checkpoint file to load from the cache volume.
+        `checkpoint_filepath` is provided.
+    checkpoint_filepath : str
+        Path to the checkpoint file to load from the model volume (relative to the
+        volume's root).
     config_filepath : str
         Path to the JSON file with model configuration. If not provided,
         the model will be configured to use all available GPUs and 4 workers.
@@ -96,7 +97,7 @@ class DeepForestApp:
 
     model_name: str = modal.parameter(default="weecology/deepforest-tree")
     model_revision: str = modal.parameter(default="main")
-    checkpoint_filename: str = modal.parameter(default="")
+    checkpoint_filepath: str = modal.parameter(default="")
     config_filepath: str = modal.parameter(default="")
     torch_seed: int = modal.parameter(default=0)
 
@@ -108,10 +109,10 @@ class DeepForestApp:
         """
         # set the random seed for reproducibility
         _ = torch.manual_seed(self.torch_seed)
-        if self.checkpoint_filename != "":
+        if self.checkpoint_filepath != "":
             # TODO: how does this affect build time?
             checkpoint_filepath = path.join(
-                settings.MODELS_DIR, self.checkpoint_filename
+                settings.MODELS_DIR, self.checkpoint_filepath
             )
             print(f"Loading model from checkpoint: {checkpoint_filepath}")
 
@@ -139,11 +140,11 @@ class DeepForestApp:
         train_df: pd.DataFrame | gpd.GeoDataFrame,
         remote_img_dir: PathType,
         *,
-        checkpoint_filename: PathType | None = None,
+        checkpoint_filepath: PathType | None = None,
         test_df: pd.DataFrame | gpd.GeoDataFrame | None = None,
         train_config: Mapping | None = None,
         validation_config: Mapping | None = None,
-        dst_filename: str | None = None,
+        dst_filepath: str | None = None,
         retrain_if_exists: bool = False,
         **create_trainer_kwargs: KwargsType,
     ) -> None:  # deepforest_main.deepforest:
@@ -155,35 +156,38 @@ class DeepForestApp:
             Training data, as pandas or geopandas data frame with bounding box
             annotations.
         remote_img_dir : path-like
-            Path to the remote directory with images, relative to the data volume root.
-        checkpoint_filename : path-like, optional
-            Name of the checkpoint file to load from the cache volume. If not provided,
-            the model loaded at container startup will be used.
+            Path to the remote directory with images, relative to the data volume's
+            root.
+        checkpoint_filepath : path-like
+            Path to the checkpoint file to load from the model volume (relative to the
+            volume's root). If not provided, the model loaded at container startup will
+            be used.
         test_df : pd.DataFrame or gpd.GeoDataFrame, optional
             Test data to use for validation during training. If not provided, training
             will be performed without validation.
         train_config, validation_config : dict-like, optional
             Configuration for the training and validation, passed to the model's
             `config` attribute under the keys "train" and "validation" respectively.
-        dst_filename : str, optional
-            Name of the file to save the retrained model to. If not provided, a file
-            name will be generated based on the current timestamp.
+        dst_filepath : path-like, optional
+            Path to the file to save the retrained model to (relative to the model
+            volume's root). If not provided, a file name will be generated based on the
+            current timestamp.
         retrain_if_exists : bool, default False
             If True, the model will be retrained even if a checkpoint with the file name
-            provided as `dst_filename` already exists and subsequently overwritten.
+            provided as `dst_filepath` already exists and subsequently overwritten.
             If False, no retraining will be done if the checkpoint already exists.
         **create_trainer_kwargs : dict-like
             Additional keyword arguments to pass to the model's `create_trainer` method.
         """
-        if not retrain_if_exists and dst_filename is not None:
+        if not retrain_if_exists and dst_filepath is not None:
             # check if the checkpoint file already exists
-            dst_filepath = path.join(settings.MODELS_DIR, dst_filename)
-            if path.exists(dst_filepath):
+            _dst_filepath = path.join(settings.MODELS_DIR, dst_filepath)
+            if path.exists(_dst_filepath):
                 print(
-                    f"Checkpoint {dst_filepath} already exists, skipping"
+                    f"Checkpoint {_dst_filepath} already exists, skipping"
                     " retraining. Use `retrain_if_exists=True` to overwrite."
                 )
-                return dst_filepath
+                return
 
         def save_annot_df(annot_df, dst_filepath):
             """Save the annotated data frame."""
@@ -191,11 +195,11 @@ class DeepForestApp:
             annot_df.to_csv(dst_filepath)
             return dst_filepath
 
-        if checkpoint_filename is not None:
-            checkpoint_filepath = path.join(settings.MODELS_DIR, checkpoint_filename)
-            print(f"Loading model from checkpoint: {checkpoint_filepath}")
+        if checkpoint_filepath is not None:
+            _checkpoint_filepath = path.join(settings.MODELS_DIR, checkpoint_filepath)
+            print(f"Loading model from checkpoint: {_checkpoint_filepath}")
             model = deepforest_main.deepforest.load_from_checkpoint(
-                checkpoint_filepath,
+                _checkpoint_filepath,
             )
         else:
             model = self.model
@@ -235,12 +239,12 @@ class DeepForestApp:
 
         # TODO: replace model attribute with the trained model?
         # self.model = model
-        if dst_filename is None:
-            dst_filename = f"deepforest-retrained-{time.strftime('%Y%m%d_%H%M%S')}.pl"
-        dst_filepath = path.join(settings.MODELS_DIR, dst_filename)
+        if dst_filepath is None:
+            dst_filepath = f"deepforest-retrained-{time.strftime('%Y%m%d_%H%M%S')}.pl"
+        _dst_filepath = path.join(settings.MODELS_DIR, dst_filepath)
         # model.save_model(dst_filepath)
-        model.trainer.save_checkpoint(dst_filepath)
-        print(f"Saved checkpoint to {dst_filepath}")
+        model.trainer.save_checkpoint(_dst_filepath)
+        print(f"Saved checkpoint to {_dst_filepath}")
         # return model
 
     @modal.method()
@@ -249,8 +253,8 @@ class DeepForestApp:
         img_filename: str,
         remote_img_dir: str,
         *,
-        checkpoint_filename: str | None = None,
-        crop_model_filename: str | None = None,
+        checkpoint_filepath: str | None = None,
+        crop_model_filepath: str | None = None,
         crop_model_num_classes: int | None = None,
         iou_threshold: float = 0.15,
         patch_size: int | None = None,
@@ -263,16 +267,18 @@ class DeepForestApp:
         img_filename : str
             File name of the image to predict on.
         remote_img_dir : str
-            Path to the remote directory with images, relative to the data volume root.
-        checkpoint_filename : str, optional
-            File name of the checkpoint to load from the cache volume. If not provided,
-            the model loaded at container startup will be used.
-        crop_model_filename : str, optional
-            File name of the checkpoint of the model to classify the cropped images
-            (i.e., species detection for the tree bounding boxes). If not provided,
-            no classification will be performed.
+            Path to the remote directory with images, relative to the data volume's
+            root.
+        checkpoint_filepath : path-like
+            Path to the checkpoint file to load from the model volume (relative to the
+            volume's root). If not provided, the model loaded at container startup will
+            be used.
+        crop_model_filepath : path-like, optional
+            Path to the checkpoint of the model to classify the cropped images, i.e.,
+            species detection for the tree bounding boxes (relative to the model
+            volume's root). If not provided, no classification will be performed.
         crop_model_num_classes : int, optional
-            Number of classes for the crop model. Required if `crop_model_filename` is
+            Number of classes for the crop model. Required if `crop_model_filepath` is
             provided, ignored otherwise.
         iou_threshold : float, optional
             Minimum Intersection over Union (IoU) overlap threshold for among
@@ -293,17 +299,19 @@ class DeepForestApp:
         gpd.GeoDataFrame
             Predicted bounding boxes with tree crown annotations.
         """
-        if checkpoint_filename is not None:
-            checkpoint_filepath = path.join(settings.MODELS_DIR, checkpoint_filename)
-            print(f"Loading model from checkpoint: {checkpoint_filepath}")
-            model = deepforest_main.deepforest.load_from_checkpoint(checkpoint_filepath)
+        if checkpoint_filepath is not None:
+            _checkpoint_filepath = path.join(settings.MODELS_DIR, checkpoint_filepath)
+            print(f"Loading model from checkpoint: {_checkpoint_filepath}")
+            model = deepforest_main.deepforest.load_from_checkpoint(
+                _checkpoint_filepath
+            )
         else:
             model = self.model
-        if crop_model_filename is not None:
-            crop_model_filepath = path.join(settings.MODELS_DIR, crop_model_filename)
-            print(f"Loading crop model from checkpoint: {crop_model_filepath}")
+        if crop_model_filepath is not None:
+            _crop_model_filepath = path.join(settings.MODELS_DIR, crop_model_filepath)
+            print(f"Loading crop model from checkpoint: {_crop_model_filepath}")
             crop_model = deepforest_model.CropModel.load_from_checkpoint(
-                crop_model_filepath, num_classes=crop_model_num_classes
+                _crop_model_filepath, num_classes=crop_model_num_classes
             )
         else:
             crop_model = None
@@ -350,7 +358,7 @@ class DeepForestApp:
         *,
         test_df: pd.DataFrame | gpd.GeoDataFrame | None = None,
         max_epochs: int = 20,
-        dst_filename: str | None = None,
+        dst_filepath: str | None = None,
         retrain_if_exists: bool = False,
         **create_trainer_kwargs: KwargsType,
     ) -> None:
@@ -368,26 +376,27 @@ class DeepForestApp:
             will be performed without validation.
         max_epochs : int, optional
             Maximum number of epochs to train the model for. Default is 20.
-        dst_filename : str, optional
-            Name of the file to save the retrained model to. If not provided, a file
-            name will be generated based on the current timestamp.
+        dst_filepath : path-like, optional
+            Path to the file to save the retrained model to (relative to the model
+            volume's root). If not provided, a file name will be generated based on the
+            current timestamp.
         retrain_if_exists : bool, default False
             If True, the model will be retrained even if a checkpoint with the file name
-            provided as `dst_filename` already exists and subsequently overwritten.
+            provided as `dst_filepath` already exists and subsequently overwritten.
             If False, no retraining will be done if the checkpoint already exists.
         **create_trainer_kwargs : dict-like
             Additional (besides `max_epochs`) keyword arguments to pass to the model's
             `create_trainer` method.
         """
-        if not retrain_if_exists and dst_filename is not None:
+        if not retrain_if_exists and dst_filepath is not None:
             # check if the checkpoint file already exists
-            dst_filepath = path.join(settings.MODELS_DIR, dst_filename)
-            if path.exists(dst_filepath):
+            _dst_filepath = path.join(settings.MODELS_DIR, dst_filepath)
+            if path.exists(_dst_filepath):
                 print(
-                    f"Checkpoint {dst_filepath} already exists, skipping"
+                    f"Checkpoint {_dst_filepath} already exists, skipping"
                     " retraining. Use `retrain_if_exists=True` to overwrite."
                 )
-                return dst_filepath
+                return
 
         # TODO: do NOT uncumment the code below until the following commit is released
         # github.com/weecology/DeepForest/b99d068be36da4d995931d7d4905bce251530a0f
@@ -434,11 +443,11 @@ class DeepForestApp:
             crop_model.trainer.fit(crop_model)
 
         # self.model = model
-        if dst_filename is None:
-            dst_filename = f"crop-{time.strftime('%Y%m%d_%H%M%S')}.pl"
-        dst_filepath = path.join(settings.MODELS_DIR, dst_filename)
+        if dst_filepath is None:
+            dst_filepath = f"crop-{time.strftime('%Y%m%d_%H%M%S')}.pl"
+        _dst_filepath = path.join(settings.MODELS_DIR, dst_filepath)
         # model.save_model(dst_filepath)
-        crop_model.trainer.save_checkpoint(dst_filepath)
+        crop_model.trainer.save_checkpoint(_dst_filepath)
         print(f"Saved checkpoint to {dst_filepath}")
 
 
