@@ -73,6 +73,7 @@ with image.imports():
         settings.MODELS_DIR: models_volume,
         settings.DATA_DIR: data_volume,
     },
+    timeout=settings.TIMEOUT,
 )
 class DeepForestApp:
     """DeepForest app.

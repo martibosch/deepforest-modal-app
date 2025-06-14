@@ -14,6 +14,7 @@ DATA_DIR = "/data"
 
 # app
 APP_NAME = "deepforest"
+TIMEOUT = 60 * 60
 
 # model args
 # maximum image size after which we will split the image into tiles using the
