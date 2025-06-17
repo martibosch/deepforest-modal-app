@@ -2,6 +2,9 @@
 # TODO: use shared config data class? e.g., see
 # https://modal.com/docs/examples/diffusers_lora_finetune
 
+# extra pip requirements for the image
+PIP_EXTRA_REQS = ["comet-ml==3.49.11"]
+
 # GPU type
 GPU_TYPE = "H100"
 

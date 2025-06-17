@@ -43,8 +43,7 @@ image = (
         channels=["conda-forge"],
     )
     .pip_install(
-        "albumentations==1.4.24",
-        "deepforest==1.5.2",
+        "albumentations==1.4.24", "deepforest==1.5.2", *settings.PIP_EXTRA_REQS
     )
     .env(
         {
