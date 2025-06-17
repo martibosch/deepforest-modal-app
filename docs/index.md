@@ -4,7 +4,7 @@ hidden:
 maxdepth: 1
 ---
 
-usage
+treeai-example
 api
 contributing
 changelog

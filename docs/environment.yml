@@ -2,10 +2,14 @@ name: deepforest-modal-app
 channels:
   - conda-forge
 dependencies:
-  - python=3.13
-  - gdal=3.10.2
+  - gdal=3.11.0
   - myst-parser=4.0.1
-  - sphinx=8.2.3
-  - pip=25.0.1
+  - nbsphinx=0.9.7
+  - openpyxl=3.1.5
+  - pip=25.1.1
+  - pooch=1.8.2
   - pydata-sphinx-theme=0.16.1
-  - setuptools=75.8.2
+  - python=3.13
+  - setuptools=80.9.0
+  - sphinx=8.2.3
+  - tqdm=4.67.1

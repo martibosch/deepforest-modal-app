@@ -57,7 +57,7 @@ test = [
 Repository = "https://github.com/martibosch/deepforest-modal-app"
 
 [tool.codespell]
-skip = "CHANGELOG.md"
+skip = "CHANGELOG.md,docs/treeai-example.ipynb"
 
 [tool.commitizen]
 major_version_zero = true
@@ -96,7 +96,9 @@ select = [
 
 [tool.ruff.lint.isort]
 known-first-party = [
-  "deepforest_modal_app"
+  "deepforest_modal_app",
+  "deepforest_utils",
+  "treeai_utils"
 ]
 
 [tool.ruff.lint.per-file-ignores]
