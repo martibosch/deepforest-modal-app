@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "deepforest-modal-app"
-version = "0.0.0"
+version = "0.1.0"
 description = "Modal app for training and inference of DeepForest models"
 readme = "README.md"
 authors = [
