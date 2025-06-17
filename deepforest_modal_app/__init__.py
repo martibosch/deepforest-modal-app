@@ -142,8 +142,8 @@ class DeepForestApp:
         *,
         checkpoint_filepath: PathType | None = None,
         test_df: pd.DataFrame | gpd.GeoDataFrame | None = None,
-        train_config: Mapping | None = None,
-        validation_config: Mapping | None = None,
+        train_config: KwargsType = None,
+        validation_config: KwargsType = None,
         dst_filepath: str | None = None,
         retrain_if_exists: bool = False,
         **create_trainer_kwargs: KwargsType,
@@ -178,6 +178,8 @@ class DeepForestApp:
             If False, no retraining will be done if the checkpoint already exists.
         **create_trainer_kwargs : dict-like
             Additional keyword arguments to pass to the model's `create_trainer` method.
+            If none provided, the value from `settings.DEFAULT_CREATE_TRAINER_KWARGS`
+            will be used.
         """
         if not retrain_if_exists and dst_filepath is not None:
             # check if the checkpoint file already exists
@@ -231,6 +233,8 @@ class DeepForestApp:
                 save_annot_df(test_df, test_df_filepath)
                 model.config["validation"]["root_dir"] = remote_img_dir
                 model.config["validation"]["csv_file"] = test_df_filepath
+            if not create_trainer_kwargs:
+                create_trainer_kwargs = settings.DEFAULT_CREATE_TRAINER_KWARGS
 
             model.create_trainer(**create_trainer_kwargs)
             start_time = time.time()
@@ -357,10 +361,10 @@ class DeepForestApp:
         remote_img_dir: PathType,
         *,
         test_df: pd.DataFrame | gpd.GeoDataFrame | None = None,
-        max_epochs: int = 20,
         dst_filepath: str | None = None,
         retrain_if_exists: bool = False,
-        **create_trainer_kwargs: KwargsType,
+        crop_model_kwargs: KwargsType = None,
+        create_trainer_kwargs: KwargsType = None,
     ) -> None:
         """Train a crop model.
 
@@ -374,8 +378,6 @@ class DeepForestApp:
         test_df : pd.DataFrame or gpd.GeoDataFrame, optional
             Test data to use for validation during training. If not provided, training
             will be performed without validation.
-        max_epochs : int, optional
-            Maximum number of epochs to train the model for. Default is 20.
         dst_filepath : path-like, optional
             Path to the file to save the retrained model to (relative to the model
             volume's root). If not provided, a file name will be generated based on the
@@ -384,9 +386,11 @@ class DeepForestApp:
             If True, the model will be retrained even if a checkpoint with the file name
             provided as `dst_filepath` already exists and subsequently overwritten.
             If False, no retraining will be done if the checkpoint already exists.
-        **create_trainer_kwargs : dict-like
-            Additional (besides `max_epochs`) keyword arguments to pass to the model's
-            `create_trainer` method.
+        crop_model_kwargs, create_trainer_kwargs : dict-like
+            Keyword arguments to pass to the model's initialization and `create_trainer`
+            methods respectively. If none provided, the values from
+            `settings.DEFAULT_CROP_MODEL_KWARGS` and
+            `settings.DEFAULT_CREATE_TRAINER_KWARGS` will be used.
         """
         if not retrain_if_exists and dst_filepath is not None:
             # check if the checkpoint file already exists
@@ -415,12 +419,15 @@ class DeepForestApp:
         # TODO: how to handle the case where not all labels are on the training set?
         # e.g., raise a ValueError?
         train_df = pd.concat([train_df, test_df]) if test_df is not None else train_df
-        crop_model = deepforest_model.CropModel(num_classes=train_df["label"].nunique())
+        if crop_model_kwargs is None:
+            crop_model_kwargs = settings.DEFAULT_CROP_MODEL_KWARGS
+        crop_model = deepforest_model.CropModel(
+            num_classes=train_df["label"].nunique(), **crop_model_kwargs
+        )
         # create trainer
-        _create_trainer_kwargs = create_trainer_kwargs.copy()
-        if "max_epochs" in create_trainer_kwargs:
-            _ = _create_trainer_kwargs.pop("max_epochs")
-        crop_model.create_trainer(max_epochs=max_epochs, **_create_trainer_kwargs)
+        if create_trainer_kwargs is None:
+            create_trainer_kwargs = settings.DEFAULT_CREATE_TRAINER_KWARGS
+        crop_model.create_trainer(**create_trainer_kwargs)
 
         def write_crops(annot_df, dst_dir):
             crop_model.write_crops(
