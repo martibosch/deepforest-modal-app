@@ -42,10 +42,10 @@ jobs:
         env:
           CONDA_EXE: mamba
 
-      - name: upload coverage reports to Codecov
-        uses: codecov/codecov-action@v5
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
+      # - name: upload coverage reports to Codecov
+      #   uses: codecov/codecov-action@v5
+      #   with:
+      #     token: ${{ secrets.CODECOV_TOKEN }}
 
       - name: list files
         run: ls -l .
