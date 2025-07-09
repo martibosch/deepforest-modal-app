@@ -42,8 +42,10 @@ image = (
         "opencv=4.11.0",
         channels=["conda-forge"],
     )
-    .pip_install(
-        "albumentations==1.4.24", "deepforest==1.5.2", *settings.PIP_EXTRA_REQS
+    .uv_pip_install(
+        "https://github.com/weecology/DeepForest/archive/"
+        "c22716907d69d3f3e661d0650fa705b08a907e85.zip",
+        *settings.PIP_EXTRA_REQS,
     )
     .env(
         {
@@ -98,6 +100,7 @@ class DeepForestApp:
     model_name: str = modal.parameter(default="weecology/deepforest-tree")
     model_revision: str = modal.parameter(default="main")
     checkpoint_filepath: str = modal.parameter(default="")
+    config_args_filepath: str = modal.parameter(default="")
     config_filepath: str = modal.parameter(default="")
     torch_seed: int = modal.parameter(default=0)
 
@@ -119,12 +122,25 @@ class DeepForestApp:
             )
             print(f"Loaded model from checkpoint: {checkpoint_filepath}")
         else:
-            # load the default release checkpoint
-            model = deepforest_main.deepforest()
-            model.load_model(model_name=self.model_name, revision=self.model_revision)
+            if self.config_args_filepath == "":
+                # load the default release checkpoint
+                model = deepforest_main.deepforest()
+                model.load_model(
+                    model_name=self.model_name, revision=self.model_revision
+                )
+            else:
+                # load the config from a JSON file
+                with open(
+                    path.join(settings.DATA_DIR, self.config_args_filepath),
+                    encoding="utf-8",
+                ) as src:
+                    config_args = json.load(src)
+                model = deepforest_main.deepforest(config_args=config_args)
+
         if self.config_filepath == "":
             # by default, use all available GPUs and 4 workers
-            self.config_dict = {"gpus": -1, "workers": 4}
+            # self.config_dict = {"gpus": -1, "workers": 4}
+            self.config_dict = {}
         else:
             # load the config from a JSON file
             with open(self.config_filepath, encoding="utf-8") as src:
