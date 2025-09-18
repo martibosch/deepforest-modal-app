@@ -3,12 +3,12 @@
 import glob
 import json
 import os
+import tempfile
 from collections.abc import Mapping
 from os import path
 from typing import Optional
 
 import modal
-import rasterio as rio
 from grpclib import GRPCError
 
 from deepforest_modal_app import settings
@@ -31,7 +31,9 @@ models_volume = modal.Volume.from_name(
 data_volume = modal.Volume.from_name(settings.DATA_VOLUME_NAME, create_if_missing=True)
 # with data_volume.batch_upload() as batch:
 #     batch.put_directory(LOCAL_DATA_DIR, ".")
-
+huggingface_secret = modal.Secret.from_name(
+    "huggingface-secret", required_keys=["HF_TOKEN"]
+)
 
 # create Modal image with required dependencies
 app = modal.App(name=settings.APP_NAME)
@@ -43,11 +45,14 @@ image = (
         channels=["conda-forge"],
     )
     .pip_install(
-        "albumentations==1.4.24", "deepforest==1.5.2", *settings.PIP_EXTRA_REQS
+        "albumentations==1.4.24",
+        "deepforest==1.5.2",
+        *settings.PIP_EXTRA_REQS,
     )
     .env(
         {
             "HF_HUB_CACHE": path.join(settings.MODELS_DIR, "hf_hub_cache"),
+            "HF_HUB_ENABLE_HF_TRANSFER": "1",  # turn on faster downloads from HF
             "TORCH_HOME": path.join(settings.MODELS_DIR, "torch"),
         }
     )
@@ -60,6 +65,7 @@ with image.imports():
 
     import geopandas as gpd
     import pandas as pd
+    import rasterio as rio
     import torch
     from deepforest import main as deepforest_main
     from deepforest import model as deepforest_model
@@ -72,6 +78,7 @@ with image.imports():
         settings.MODELS_DIR: models_volume,
         settings.DATA_DIR: data_volume,
     },
+    secrets=[huggingface_secret],
     timeout=settings.TIMEOUT,
 )
 class DeepForestApp:
@@ -249,6 +256,53 @@ class DeepForestApp:
         model.trainer.save_checkpoint(_dst_filepath)
         print(f"Saved checkpoint to {_dst_filepath}")
         # return model
+
+    @modal.method()
+    def checkpoint_to_hf_hub(
+        self,
+        repo_id: str,
+        *,
+        checkpoint_filepath: PathType | None = None,
+        model_card_kwargs: KwargsType = None,
+        **push_to_hub_kwargs,
+    ) -> None:
+        """
+        Push a DeepForest model checkpoint to the Hugging Face Hub.
+
+        Parameters
+        ----------
+        repo_id : str
+            The repository in HuggingFace Hub to which the model should be pushed.
+        checkpoint_filepath : path-like, optional
+            Path to the checkpoint file to load from the model volume (relative to the
+            volume's root). If not provided, the model loaded at container startup will
+            be used.
+        model_card_kwargs : dict, optional
+            Additional keyword arguments passed as the `model_card_kwargs` keyword
+            argument in the model's `save_pretrained` method.
+        **push_to_hub_kwargs
+            Additional keyword arguments passed to the model's `save_pretrained` method.
+        """
+        if checkpoint_filepath is not None:
+            _checkpoint_filepath = path.join(settings.MODELS_DIR, checkpoint_filepath)
+            model = deepforest_main.deepforest.load_from_checkpoint(
+                _checkpoint_filepath,
+            )
+            print(f"Loaded model from checkpoint: {_checkpoint_filepath}")
+        else:
+            model = self.model
+        _push_to_hub_kwargs = {}
+        token = _push_to_hub_kwargs.get("token", os.environ["HF_TOKEN"])
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            model.save_pretrained(
+                save_directory=tmp_dir,
+                repo_id=repo_id,
+                push_to_hub=True,
+                model_card_kwargs=model_card_kwargs,
+                token=token,
+                **_push_to_hub_kwargs,
+            )
+        print(f"Pushed model from {_checkpoint_filepath} to {repo_id}")
 
     @modal.method()
     def predict(
@@ -551,3 +605,73 @@ def ensure_imgs(
                 src_filepath = path.join(local_img_dir, img_filename)
                 batch.put_file(src_filepath, path.join(remote_img_dir, img_filename))
         print("Upload completed.")
+
+
+# @app.function(volumes={settings.MODELS_DIR: models_volume})
+# def _checkpoint_to_hf_hub(
+#     checkpoint_filepath: PathType,
+#     repo_id: str,
+#     *,
+#     model_cards_kwargs: KwargsType = None,
+#     **push_to_hub_kwargs,
+# ) -> str:
+#     """
+#     Push a DeepForest model checkpoint to the Hugging Face Hub.
+
+#     Parameters
+#     ----------
+#     repo_id : str
+#         The repository in HuggingFace Hub to which the model should be pushed.
+#     model_cards_kwargs : dict, optional
+#         Additional keyword arguments passed as the `model_cards_kwargs` keyword
+#         argument in the model's `save_pretrained` method.
+#     **push_to_hub_kwargs
+#         Additional keyword arguments passed to the model's `save_pretrained` method.
+
+#     Returns
+#     -------
+#     commit_url: str
+#         The commit URL.
+#     """
+#     _checkpoint_filepath = path.join(settings.MODELS_DIR, checkpoint_filepath)
+#     model = deepforest_main.deepforest.load_from_checkpoint(
+#         _checkpoint_filepath,
+#     )
+#     print(f"Loaded model from checkpoint: {_checkpoint_filepath}")
+#     _push_to_hub_kwargs = {}
+#     token = _push_to_hub_kwargs.get("token", os.environ["HF_TOKEN"])
+#     with tempfile.TemporaryDirectory() as tmp_dir:
+#         commit_url = model.save_pretrained(
+#             save_directory=tmp_dir,
+#             push_to_hub=True,
+#             repo_id=repo_id,
+#             model_cards_kwargs=model_cards_kwargs,
+#             token=token,
+#             **_push_to_hub_kwargs,
+#         )
+#     print(f"Pushed model from {_checkpoint_filepath} to {repo_id}")
+#     return commit_url
+
+
+# @app.local_entrypoint()
+# def checkpoint_to_hf_hub(checkpoint_filepath: str, repo_id: str) -> str:
+#     """
+#     Push a DeepForest model checkpoint to the Hugging Face Hub.
+
+#     Parameters
+#     ----------
+#     checkpoint_filepath : path-like
+#         Path to the checkpoint file to load from the model volume (relative to the
+#         volume's root).
+#     repo_id : str
+#         The repository in HuggingFace Hub to which the model should be pushed.
+
+#     Returns
+#     -------
+#     commit_url: str
+#         The commit URL.
+#     """
+#     return _checkpoint_to_hf_hub.remote(
+#         checkpoint_filepath,
+#         repo_id,
+#     )
