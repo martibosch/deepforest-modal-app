@@ -4,7 +4,7 @@ import glob
 import json
 import os
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from os import path
 from typing import Optional
 
@@ -45,8 +45,8 @@ image = (
         channels=["conda-forge"],
     )
     .uv_pip_install(
-        "albumentations==1.4.24",
-        "deepforest==1.5.2",
+        "https://github.com/weecology/DeepForest/archive/"
+        "d0af7e9a5a1ade1309c484eebb42650050442c0c.zip",
         *settings.PIP_EXTRA_REQS,
     )
     .env(
@@ -65,7 +65,6 @@ with image.imports():
 
     import geopandas as gpd
     import pandas as pd
-    import rasterio as rio
     import torch
     from deepforest import main as deepforest_main
     from deepforest import model as deepforest_model
@@ -308,25 +307,32 @@ class DeepForestApp:
     @modal.method()
     def predict(
         self,
-        img_filename: str,
         remote_img_dir: str,
         *,
+        img_filenames: str | Sequence[str] | None = None,
+        img_ext: str | None = None,
         checkpoint_filepath: str | None = None,
         crop_model_filepath: str | None = None,
         crop_model_num_classes: int | None = None,
         iou_threshold: float = 0.15,
         patch_size: int | None = None,
         patch_overlap: float | None = None,
+        dataloader_strategy: str = "batch",
     ) -> gpd.GeoDataFrame:
         """Predict tree crown bounding boxes using the a DeepForest-like model.
 
         Parameters
         ----------
-        img_filename : str
-            File name of the image to predict on.
         remote_img_dir : str
             Path to the remote directory with images, relative to the data volume's
             root.
+        img_filenames : str or list-like of str, optional
+            Images to predict on, relative to `remote_img_dir`. If not provided,
+            all images in `remote_img_dir` with the specified `img_ext` will be used.
+        img_ext : str, optional
+            Image file extension to use when searching for images in `remote_img_dir`.
+            Ignored if `img_filenames` is provided. If not provided, the value from
+            `settings.IMG_EXT` will be used.
         checkpoint_filepath : path-like
             Path to the checkpoint file to load from the model volume (relative to the
             volume's root). If not provided, the model loaded at container startup will
@@ -342,15 +348,23 @@ class DeepForestApp:
             Minimum Intersection over Union (IoU) overlap threshold for among
             predictions between windows to be suppressed. Default is 0.15.
         patch_size : int, optional
-            Size of the window to use for prediction, in pixels. If not provided, the
-            behaviour depends on how the image size compares to
-            `settings.MAX_IMAGE_SIZE`, i.e., if smaller, the whole image will be
-            used for prediction; whereas if larger, the image will be split into
-            (square) tiles of size `settings.MAX_IMAGE_SIZE` for prediction.
+            Size of the square patches to split the image into for prediction. If not
+            provided, the default value from `settings.PATCH_SIZE` will be used. If
+            the image is smaller than `patch_size`, it will be processed as a whole.
         patch_overlap : float, optional
             Overlap between windows, as a fraction of the patch size. Ignored if the
             image is not split into tiles (depending on the image size and the provided
             `patch_size`, see the description of the `patch_size` argument above).
+        dataloader_strategy : {"single", "batch", "window"}, optional
+            Strategy to use for creating the dataloader for prediction. Options are:
+            - "single": loads the entire image into CPU memory and passes individual
+              windows to GPU.
+            - "batch": loads the entire image into GPU memory and creates views of the
+              image as batches. Requires the entire tile to fit into GPU memory. CPU
+              parallelization is possible for loading images.
+            - "window": loads only the desired window of the image from the raster
+              dataset. Most memory efficient option, but cannot parallelize across
+              windows due to Python’s Global Interpreter Lock, workers must be set to 0.
 
         Returns
         -------
@@ -374,34 +388,31 @@ class DeepForestApp:
         else:
             crop_model = None
 
-        img_filepath = path.join(settings.DATA_DIR, remote_img_dir, img_filename)
-        log_msg = f"Predicting on {img_filename} with"
-        if patch_size is None:
-            # if no `patch_size` is provided, check if the image is large
-            with rio.open(img_filepath) as src:
-                max_size = max(src.width, src.height)
-                if max_size > settings.MAX_IMG_SIZE:
-                    # the image is large, use default patch size
-                    patch_size = settings.DEFAULT_PATCH_SIZE
-                    if patch_overlap is None:
-                        # use default overlap if not provided
-                        patch_overlap = settings.DEFAULT_PATCH_OVERLAP
-                    log_msg += f" patch size {patch_size}, overlap {patch_overlap} and "
-                else:
-                    # the image is small, use the whole image
-                    patch_size = max_size
-                    patch_overlap = 0
-        else:
-            # a patch size is provided, use it
-            if patch_overlap is None:
-                # use default overlap if not provided
-                patch_overlap = settings.DEFAULT_PATCH_OVERLAP
-            log_msg += f" patch size {patch_size}, overlap {patch_overlap} and "
+        if isinstance(img_filenames, str):
+            img_filenames = [img_filenames]
+        if len(img_filenames) == 0:
+            if img_ext is None:
+                img_ext = settings.DEFAULT_IMG_EXT
+            img_filenames = glob.glob(
+                path.join(
+                    settings.DATA_DIR,
+                    remote_img_dir,
+                    f"*.{img_ext}",
+                )
+            )
 
-        log_msg = f" IOU threshold {iou_threshold}."
+        img_filepaths = [
+            path.join(settings.DATA_DIR, remote_img_dir, img_filename)
+            for img_filename in img_filenames
+        ]
+        log_msg = (
+            f"Predicting on {len(img_filepaths)} images at {remote_img_dir} with"
+            f" patch size {patch_size}, overlap {patch_overlap} and"
+            " IOU threshold {iou_threshold}."
+        )
         print(log_msg)
         return model.predict_tile(
-            img_filepath,
+            img_filepaths,
             patch_size=patch_size,
             patch_overlap=patch_overlap,
             iou_threshold=iou_threshold,
