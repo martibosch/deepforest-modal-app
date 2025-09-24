@@ -44,7 +44,7 @@ image = (
         "opencv=4.11.0",
         channels=["conda-forge"],
     )
-    .pip_install(
+    .uv_pip_install(
         "albumentations==1.4.24",
         "deepforest==1.5.2",
         *settings.PIP_EXTRA_REQS,
