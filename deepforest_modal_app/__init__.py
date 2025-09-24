@@ -134,7 +134,8 @@ class DeepForestApp:
             self.config_dict = {"gpus": -1, "workers": 4}
         else:
             # load the config from a JSON file
-            with open(self.config_filepath, encoding="utf-8") as src:
+            _config_filepath = path.join(settings.DATA_DIR, self.config_filepath)
+            with open(_config_filepath, encoding="utf-8") as src:
                 self.config_dict = json.load(src)
         for key, value in self.config_dict.items():
             model.config[key] = value
