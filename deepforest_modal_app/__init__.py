@@ -72,6 +72,7 @@ with image.imports():
 
 @app.cls(
     image=image,
+    cpu=settings.CPU,
     gpu=settings.GPU_TYPE,
     volumes={
         settings.MODELS_DIR: models_volume,

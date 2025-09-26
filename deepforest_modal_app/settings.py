@@ -5,6 +5,10 @@
 # extra pip requirements for the image
 PIP_EXTRA_REQS = ["comet-ml==3.49.11"]
 
+# CPU cores
+# see https://modal.com/docs/guide/resources#cpu-cores
+CPU = 8.0
+
 # GPU type
 GPU_TYPE = "H100"
 
