@@ -71,7 +71,7 @@ jobs:
         if: ${{ github.ref_name != 'v0.1.0' }}
 
       - name: create release
-        uses: ncipollo/release-action@v1.16.0
+        uses: ncipollo/release-action@v1.20.0
         with:
           allowUpdates: true
           draft: false
