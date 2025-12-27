@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
+requires = ["uv_build>=0.9.4,<0.10.0"]
+build-backend = "uv_build"
 
 [project]
 name = "deepforest-modal-app"
@@ -22,6 +22,7 @@ classifiers = [
 requires-python = ">=3.10"
 dependencies = [
   "modal",
+  "numpy >= 2.0.0",
   "geopandas >= 1.0.0",
   "rasterio >= 1.0.0"
 ]
@@ -52,12 +53,22 @@ test = [
   "pytest-cov",
   "ruff"
 ]
+user-guide = [
+  "comet-ml",
+  "faster-coco-eval",
+  "ipywidgets",
+  "matplotlib",
+  "openpyxl",
+  "pooch",
+  "pycocotools",
+  "uv"
+]
 
 [project.urls]
 Repository = "https://github.com/martibosch/deepforest-modal-app"
 
 [tool.codespell]
-skip = "CHANGELOG.md,docs/treeai-example.ipynb"
+skip = "CHANGELOG.md,pixi.lock,docs/treeai-example.ipynb"
 
 [tool.commitizen]
 major_version_zero = true
@@ -79,6 +90,39 @@ omit = ["tests/*", "docs/conf.py"]
 
 [tool.coverage.run]
 source = ["deepforest_modal_app"]
+
+[tool.pixi.dependencies]
+python = ">=3.10,<3.13"
+gdal = ">=3"
+ipykernel = ">=7.1.0,<8"
+
+[tool.pixi.environments]
+dev = ["dev"]
+doc = ["doc"]
+test = ["test"]
+user-guide = ["user-guide"]
+
+[tool.pixi.feature.dev.tasks]
+build = "python -m build"
+check = {cmd = "twine check dist/*", depends-on = ["build"]}
+
+[tool.pixi.feature.doc.tasks]
+build-doc = "sphinx-build docs docs/_build"
+
+[tool.pixi.feature.test.tasks]
+# use dotenv to set api keys as env. vars
+test = "pytest -s --cov=deepforest_modal_app --cov-report=xml tests"
+
+[tool.pixi.feature.user-guide.tasks]
+# https://github.com/prefix-dev/pixi/issues/771
+deepforest-install = "uv pip install 'deepforest>=2.0.0'"
+
+[tool.pixi.pypi-dependencies]
+deepforest_modal_app = {path = ".", editable = true}
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["linux-64", "osx-64", "win-64"]
 
 [tool.ruff]
 line-length = 88
@@ -112,66 +156,12 @@ known-first-party = [
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"
 
-[tool.setuptools.packages.find]
-include = [
-  "deepforest_modal_app",
-  "deepforest_modal_app.*"
-]
+[tool.uv.build-backend]
+module-name = "deepforest_modal_app"
+module-root = ""
 
-[tool.tox]
-env_list = [
-  "3.10",
-  "3.11",
-  "3.12",
-  "3.13",
-  "lint"
-]
-requires = [
-  "tox>=4.19"
-]
-
-[tool.tox.env.lint]
-commands = [
-  "python -m build",
-  "sphinx-build docs docs/_build",
-  "twine check dist/*"
-]
-extras = [
-  "dev",
-  "doc",
-  "test"
-]
-whitelist_externals = [
-  "build",
-  "sphinx-build",
-  "twine"
-]
-
-[tool.tox.env_run_base]
-commands = [
-  ["pytest", "-s", "--cov=deepforest_modal_app", "--cov-report=xml", "tests"]
-]
-conda_deps = [
-  "gdal>=3.3"
-]
-extras = [
-  "test"
-]
-whitelist_externals = [
-  "pytest"
-]
-
-[tool.tox.gh.python]
-"3.10" = [
-  "3.10"
-]
-"3.11" = [
-  "3.11"
-]
-"3.12" = [
-  "3.12"
-]
-"3.13" = [
-  "3.13",
-  "lint"
-]
+[[tool.uv.index]]
+name = "testpypi"
+url = "https://test.pypi.org/simple/"
+publish-url = "https://test.pypi.org/legacy/"
+explicit = true

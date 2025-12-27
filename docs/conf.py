@@ -2,13 +2,12 @@
 
 import os
 import sys
-
-import pkg_resources
+from importlib import metadata
 
 project = "DeepForest modal app"
 author = "Martí Bosch"
 
-release = pkg_resources.get_distribution("deepforest_modal_app").version
+release = metadata.version("deepforest_modal_app")
 version = ".".join(release.split(".")[:2])
 
 
