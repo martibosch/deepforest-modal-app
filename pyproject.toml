@@ -21,9 +21,10 @@ classifiers = [
 ]
 requires-python = ">=3.10"
 dependencies = [
-  "modal",
-  "numpy >= 2.0.0",
   "geopandas >= 1.0.0",
+  "modal == 1.3.1",
+  "numpy >= 2.0.0",
+  "pandas < 3.0.0",
   "rasterio >= 1.0.0"
 ]
 
@@ -95,6 +96,7 @@ source = ["deepforest_modal_app"]
 python = ">=3.10,<3.13"
 gdal = ">=3"
 ipykernel = ">=7.1.0,<8"
+scikit-learn = ">=1.8.0,<2"
 
 [tool.pixi.environments]
 dev = ["dev"]
@@ -113,9 +115,9 @@ build-doc = "sphinx-build docs docs/_build"
 # use dotenv to set api keys as env. vars
 test = "pytest -s --cov=deepforest_modal_app --cov-report=xml tests"
 
-[tool.pixi.feature.user-guide.tasks]
-# https://github.com/prefix-dev/pixi/issues/771
-deepforest-install = "uv pip install 'deepforest>=2.0.0'"
+[tool.pixi.feature.user-guide.dependencies]
+pytorch-lightning = ">=2.6.1,<3"
+scipy = ">=1.17.0,<2"
 
 [tool.pixi.pypi-dependencies]
 deepforest_modal_app = {path = ".", editable = true}
@@ -141,13 +143,17 @@ select = [
 [tool.ruff.lint.isort]
 known-first-party = [
   "deepforest_modal_app",
-  "deepforest_utils",
+  "eval_utils",
+  "plot_utils",
   "treeai_utils"
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "**/__init__.py" = [
   "F401"
+]
+"docs/*.py" = [
+  "D"
 ]
 "tests/test_deepforest_modal_app.py" = [
   "D"

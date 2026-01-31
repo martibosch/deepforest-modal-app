@@ -1,10 +1,13 @@
 """Modal app for DeepForest model training and inference."""
 
+import copy
 import glob
 import json
 import os
 import tempfile
 from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from os import path
 from typing import Optional
 
@@ -45,14 +48,22 @@ image = (
         channels=["conda-forge"],
     )
     .uv_pip_install(
-        "https://github.com/weecology/DeepForest/archive/"
-        "d0af7e9a5a1ade1309c484eebb42650050442c0c.zip",
+        # "deepforest>=2.0.0",
+        "https://github.com/martibosch/DeepForest/archive/"
+        "58a9b39e4ba55c89b90ff7146e64892cb769c35f"
+        # "https://github.com/weecology/DeepForest/archive/"
+        # "e44b2681bfe7fc20b8702304d364024bcde01c7c",
+        # "ad614add382c1cd5213a016d3d671a9c324deedc",
+        # "7fff5fed131aa048a79dfdf8ecc42abf973468a5"
+        # "927e614b8cca14a599488e03b5d284ec656250ed"
+        ".zip",
         *settings.PIP_EXTRA_REQS,
     )
     .env(
         {
             "HF_HUB_CACHE": path.join(settings.MODELS_DIR, "hf_hub_cache"),
             "HF_HUB_ENABLE_HF_TRANSFER": "1",  # turn on faster downloads from HF
+            "PYTORCH_ALLOC_CONF": "expandable_segments:True",
             "TORCH_HOME": path.join(settings.MODELS_DIR, "torch"),
         }
     )
@@ -68,6 +79,82 @@ with image.imports():
     import torch
     from deepforest import main as deepforest_main
     from deepforest import model as deepforest_model
+    from deepforest.datasets.training import create_aligned_image_folders
+    from shapely import geometry
+    from torchvision import transforms
+
+
+def _load_model(
+    *,
+    checkpoint_filepath: PathType | None = None,
+    config_filepath: PathType | None = None,
+    config_args: Mapping | None = None,
+    model_name: str | None = None,
+    model_revision: str | None = None,
+):
+    """Load a model.
+
+    Parameters
+    ----------
+    checkpoint_filepath : path-like, optional
+        Path to the checkpoint file to load from the model volume (relative to the
+        volume's root). If None, the model from `model_name` and `model_revision` are
+        loaded from Hugging Face Hub.
+    config_filepath : path-like, optional
+        Path to the JSON file with model configuration. If None, the defaults from
+        DeepForest is used.
+    config_args : mapping, optional
+        Mapping of configuration overrides to the given file.
+    model_name : str, optional
+        Name of the model to load from Hugging Face Hub. Ignored if
+        `checkpoint_filepath` is provided. If None, the default from
+        `settings.DEFAULT_MODEL_NAME` is used.
+    model_revision : str, optional
+        Revision of the model to load from Hugging Face Hub. Ignored if
+        `checkpoint_filepath` is provided. If None, the default from
+        `settings.DEFAULT_MODEL_REVISION` is used.
+
+    Returns
+    -------
+    deepforest_main.deepforest
+        The loaded DeepForest model.
+    """
+    # process config path first
+    if config_filepath is None:
+        _config_filepath = None
+    else:
+        _config_filepath = path.join(settings.DATA_DIR, config_filepath)
+
+    if checkpoint_filepath is not None:
+        checkpoint_filepath = path.join(settings.MODELS_DIR, checkpoint_filepath)
+        load_kwargs = {}
+        if _config_filepath is not None:
+            load_kwargs["config"] = _config_filepath
+        if config_args is None:
+            _config_args = {}
+        else:
+            _config_args = copy.deepcopy(config_args)
+        # prevent metric initialization with the tmp no longer existing validation csv
+        # file
+        val_config = {}
+        val_config["csv_file"] = None
+        val_config["root_dir"] = None
+        _config_args["validation"] = val_config
+        load_kwargs["config_args"] = _config_args
+        model = deepforest_main.deepforest.load_from_checkpoint(
+            checkpoint_filepath, **load_kwargs
+        )
+        print(f"Loaded model from checkpoint: {checkpoint_filepath}")
+    else:
+        # init model
+        model = deepforest_main.deepforest(
+            config=_config_filepath, config_args=config_args
+        )
+        # load the default release checkpoint
+        model.load_model(model_name=model_name, revision=model_revision)
+
+    # return the model
+    return model
 
 
 @app.cls(
@@ -86,60 +173,20 @@ class DeepForestApp:
 
     Parameters
     ----------
-    model_name : str
-        Name of the model to load from Hugging Face Hub. Ignored if
-        `checkpoint_filepath` is provided.
-    model_revision : str
-        Revision of the model to load from Hugging Face Hub. Ignored if
-        `checkpoint_filepath` is provided.
-    checkpoint_filepath : str
-        Path to the checkpoint file to load from the model volume (relative to the
-        volume's root).
-    config_filepath : str
-        Path to the JSON file with model configuration. If not provided,
-        the model will be configured to use all available GPUs and 4 workers.
     torch_seed : int
         Seed for PyTorch random number generator, used for reproducibility.
     """
 
-    model_name: str = modal.parameter(default="weecology/deepforest-tree")
-    model_revision: str = modal.parameter(default="main")
-    checkpoint_filepath: str = modal.parameter(default="")
-    config_filepath: str = modal.parameter(default="")
     torch_seed: int = modal.parameter(default=0)
 
     @modal.enter()
-    def load_model(self) -> None:
-        """Load the model from Hugging Face Hub or a checkpoint.
+    def set_seed(self) -> None:
+        """Set a random seed for reproducibility.
 
         This method is run at container startup only.
         """
         # set the random seed for reproducibility
         _ = torch.manual_seed(self.torch_seed)
-        if self.checkpoint_filepath != "":
-            # TODO: how does this affect build time?
-            checkpoint_filepath = path.join(
-                settings.MODELS_DIR, self.checkpoint_filepath
-            )
-            model = deepforest_main.deepforest.load_from_checkpoint(
-                checkpoint_filepath,
-            )
-            print(f"Loaded model from checkpoint: {checkpoint_filepath}")
-        else:
-            # load the default release checkpoint
-            model = deepforest_main.deepforest()
-            model.load_model(model_name=self.model_name, revision=self.model_revision)
-        if self.config_filepath == "":
-            # by default, use all available GPUs and 4 workers
-            self.config_dict = {"gpus": -1, "workers": 4}
-        else:
-            # load the config from a JSON file
-            _config_filepath = path.join(settings.DATA_DIR, self.config_filepath)
-            with open(_config_filepath, encoding="utf-8") as src:
-                self.config_dict = json.load(src)
-        for key, value in self.config_dict.items():
-            model.config[key] = value
-        self.model = model
 
     @modal.method()
     def retrain_crown_model(
@@ -147,12 +194,14 @@ class DeepForestApp:
         train_df: pd.DataFrame | gpd.GeoDataFrame,
         remote_img_dir: PathType,
         *,
-        checkpoint_filepath: PathType | None = None,
         test_df: pd.DataFrame | gpd.GeoDataFrame | None = None,
-        train_config: KwargsType = None,
-        validation_config: KwargsType = None,
         dst_filepath: str | None = None,
         retrain_if_exists: bool = False,
+        checkpoint_filepath: PathType | None = None,
+        config_filepath: PathType | None = None,
+        config_args: Mapping | None = None,
+        model_name: str | None = None,
+        model_revision: str | None = None,
         **create_trainer_kwargs: KwargsType,
     ) -> None:  # deepforest_main.deepforest:
         """Retrain the DeepForest model with the provided training data.
@@ -165,16 +214,9 @@ class DeepForestApp:
         remote_img_dir : path-like
             Path to the remote directory with images, relative to the data volume's
             root.
-        checkpoint_filepath : path-like
-            Path to the checkpoint file to load from the model volume (relative to the
-            volume's root). If not provided, the model loaded at container startup will
-            be used.
         test_df : pd.DataFrame or gpd.GeoDataFrame, optional
             Test data to use for validation during training. If not provided, training
             will be performed without validation.
-        train_config, validation_config : dict-like, optional
-            Configuration for the training and validation, passed to the model's
-            `config` attribute under the keys "train" and "validation" respectively.
         dst_filepath : path-like, optional
             Path to the file to save the retrained model to (relative to the model
             volume's root). If not provided, a file name will be generated based on the
@@ -183,6 +225,23 @@ class DeepForestApp:
             If True, the model will be retrained even if a checkpoint with the file name
             provided as `dst_filepath` already exists and subsequently overwritten.
             If False, no retraining will be done if the checkpoint already exists.
+        checkpoint_filepath : path-like, optional
+            Path to the checkpoint file to load from the model volume (relative to the
+            volume's root). If None, the model from `model_name` and `model_revision`
+            are loaded from Hugging Face Hub.
+        config_filepath : path-like, optional
+            Path to the JSON file with model configuration. If None, the defaults from
+            DeepForest is used.
+        config_args : mapping, optional
+            Mapping of configuration overrides to the given file.
+        model_name : str, optional
+            Name of the model to load from Hugging Face Hub. Ignored if
+            `checkpoint_filepath` is provided. If None, the default from
+            `settings.DEFAULT_MODEL_NAME` is used.
+        model_revision : str, optional
+            Revision of the model to load from Hugging Face Hub. Ignored if
+            `checkpoint_filepath` is provided. If None, the default from
+            `settings.DEFAULT_MODEL_REVISION` is used.
         **create_trainer_kwargs : dict-like
             Additional keyword arguments to pass to the model's `create_trainer` method.
             If none provided, the value from `settings.DEFAULT_CREATE_TRAINER_KWARGS`
@@ -204,26 +263,24 @@ class DeepForestApp:
             annot_df.to_csv(dst_filepath)
             return dst_filepath
 
-        if checkpoint_filepath is not None:
-            _checkpoint_filepath = path.join(settings.MODELS_DIR, checkpoint_filepath)
-            model = deepforest_main.deepforest.load_from_checkpoint(
-                _checkpoint_filepath,
-            )
-            print(f"Loaded model from checkpoint: {_checkpoint_filepath}")
-        else:
-            model = self.model
+        model = _load_model(
+            checkpoint_filepath=checkpoint_filepath,
+            config_filepath=config_filepath,
+            config_args=config_args,
+            model_name=model_name,
+            model_revision=model_revision,
+        )
 
         # pass configuration to the model
-        if train_config is None:
-            # use all gpus by default
-            train_config = {"gpus": -1}
-        for key, value in train_config.items():
-            model.config["train"][key] = value
+        # if train_config is None:
+        #     train_config = {}
+        # for key, value in train_config.items():
+        #     model.config["train"][key] = value
 
-        if validation_config is None:
-            validation_config = {}
-        for key, value in validation_config.items():
-            model.config["validation"][key] = value
+        # if validation_config is None:
+        #     validation_config = {}
+        # for key, value in validation_config.items():
+        #     model.config["validation"][key] = value
 
         # prepend volume path to the remote image directory
         remote_img_dir = path.join(settings.DATA_DIR, remote_img_dir)
@@ -261,9 +318,9 @@ class DeepForestApp:
     @modal.method()
     def checkpoint_to_hf_hub(
         self,
+        checkpoint_filepath: PathType,
         repo_id: str,
         *,
-        checkpoint_filepath: PathType | None = None,
         model_card_kwargs: KwargsType = None,
         **push_to_hub_kwargs,
     ) -> None:
@@ -284,14 +341,11 @@ class DeepForestApp:
         **push_to_hub_kwargs
             Additional keyword arguments passed to the model's `save_pretrained` method.
         """
-        if checkpoint_filepath is not None:
-            _checkpoint_filepath = path.join(settings.MODELS_DIR, checkpoint_filepath)
-            model = deepforest_main.deepforest.load_from_checkpoint(
-                _checkpoint_filepath,
-            )
-            print(f"Loaded model from checkpoint: {_checkpoint_filepath}")
-        else:
-            model = self.model
+        _checkpoint_filepath = path.join(settings.MODELS_DIR, checkpoint_filepath)
+        model = deepforest_main.deepforest.load_from_checkpoint(
+            _checkpoint_filepath,
+        )
+        print(f"Loaded model from checkpoint: {_checkpoint_filepath}")
         _push_to_hub_kwargs = {}
         token = _push_to_hub_kwargs.get("token", os.environ["HF_TOKEN"])
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -313,8 +367,11 @@ class DeepForestApp:
         img_filenames: str | Sequence[str] | None = None,
         img_ext: str | None = None,
         checkpoint_filepath: str | None = None,
+        config_filepath: PathType | None = None,
+        config_args: Mapping | None = None,
+        model_name: str | None = None,
+        model_revision: str | None = None,
         crop_model_filepath: str | None = None,
-        crop_model_num_classes: int | None = None,
         iou_threshold: float = 0.15,
         patch_size: int | None = None,
         patch_overlap: float | None = None,
@@ -334,17 +391,27 @@ class DeepForestApp:
             Image file extension to use when searching for images in `remote_img_dir`.
             Ignored if `img_filenames` is provided. If not provided, the value from
             `settings.IMG_EXT` will be used.
-        checkpoint_filepath : path-like
+        checkpoint_filepath : path-like, optional
             Path to the checkpoint file to load from the model volume (relative to the
-            volume's root). If not provided, the model loaded at container startup will
-            be used.
+            volume's root). If None, the model from `model_name` and `model_revision`
+            are loaded from Hugging Face Hub.
+        config_filepath : path-like, optional
+            Path to the JSON file with model configuration. If None, the defaults from
+            DeepForest is used.
+        config_args : mapping, optional
+            Mapping of configuration overrides to the given file.
+        model_name : str, optional
+            Name of the model to load from Hugging Face Hub. Ignored if
+            `checkpoint_filepath` is provided. If None, the default from
+            `settings.DEFAULT_MODEL_NAME` is used.
+        model_revision : str, optional
+            Revision of the model to load from Hugging Face Hub. Ignored if
+            `checkpoint_filepath` is provided. If None, the default from
+            `settings.DEFAULT_MODEL_REVISION` is used.
         crop_model_filepath : path-like, optional
             Path to the checkpoint of the model to classify the cropped images, i.e.,
             species detection for the tree bounding boxes (relative to the model
             volume's root). If not provided, no classification will be performed.
-        crop_model_num_classes : int, optional
-            Number of classes for the crop model. Required if `crop_model_filepath` is
-            provided, ignored otherwise.
         iou_threshold : float, optional
             Minimum Intersection over Union (IoU) overlap threshold for among
             predictions between windows to be suppressed. Default is 0.15.
@@ -372,18 +439,17 @@ class DeepForestApp:
         gpd.GeoDataFrame
             Predicted bounding boxes with tree crown annotations.
         """
-        if checkpoint_filepath is not None:
-            _checkpoint_filepath = path.join(settings.MODELS_DIR, checkpoint_filepath)
-            model = deepforest_main.deepforest.load_from_checkpoint(
-                _checkpoint_filepath
-            )
-            print(f"Loaded model from checkpoint: {_checkpoint_filepath}")
-        else:
-            model = self.model
+        model = _load_model(
+            checkpoint_filepath=checkpoint_filepath,
+            config_filepath=config_filepath,
+            config_args=config_args,
+            model_name=model_name,
+            model_revision=model_revision,
+        )
         if crop_model_filepath is not None:
             _crop_model_filepath = path.join(settings.MODELS_DIR, crop_model_filepath)
             crop_model = deepforest_model.CropModel.load_from_checkpoint(
-                _crop_model_filepath, num_classes=crop_model_num_classes
+                _crop_model_filepath,
             )
             print(f"Loaded crop model from checkpoint: {_crop_model_filepath}")
         else:
@@ -409,15 +475,33 @@ class DeepForestApp:
         log_msg = (
             f"Predicting on {len(img_filepaths)} images at {remote_img_dir} with"
             f" patch size {patch_size}, overlap {patch_overlap} and"
-            " IOU threshold {iou_threshold}."
+            f" IOU threshold {iou_threshold}."
         )
         print(log_msg)
-        return model.predict_tile(
+        # for some reason, the line below returns nan geometries, likely related to
+        # https://github.com/weecology/DeepForest/issues/1149#event-19952397024
+        # in the meantime, ensure the geometry column manually
+        # return model.predict_tile(
+        #     img_filepaths,
+        #     patch_size=patch_size,
+        #     patch_overlap=patch_overlap,
+        #     iou_threshold=iou_threshold,
+        #     crop_model=crop_model,
+        #     dataloader_strategy=dataloader_strategy,
+        # )
+        pred_gdf = model.predict_tile(
             img_filepaths,
             patch_size=patch_size,
             patch_overlap=patch_overlap,
             iou_threshold=iou_threshold,
             crop_model=crop_model,
+            dataloader_strategy=dataloader_strategy,
+        )
+        return gpd.GeoDataFrame(
+            pred_gdf,
+            geometry=pred_gdf.apply(
+                lambda x: geometry.box(x.xmin, x.ymin, x.xmax, x.ymax), axis="columns"
+            ),
         )
 
     @modal.method()
@@ -431,6 +515,10 @@ class DeepForestApp:
         retrain_if_exists: bool = False,
         crop_model_kwargs: KwargsType = None,
         create_trainer_kwargs: KwargsType = None,
+        crop_augmentations: Sequence[Mapping[str, object]] | None = None,
+        crops_dir: str | None = None,
+        write_crops_max_workers: int | None = None,
+        write_crops_chunk_size: int | None = 512,
     ) -> None:
         """Train a crop model.
 
@@ -457,6 +545,20 @@ class DeepForestApp:
             methods respectively. If none provided, the values from
             `settings.DEFAULT_CROP_MODEL_KWARGS` and
             `settings.DEFAULT_CREATE_TRAINER_KWARGS` will be used.
+        crop_augmentations : list of dict, optional
+            Torchvision augmentation configs for crop classification training. Each
+            entry should be a mapping with a "name" key (e.g., "RandomRotation") and
+            optional "kwargs". If provided, custom transforms are used instead of the
+            default HorizontalFlip-only augmentation.
+        crops_dir : str, optional
+            Directory (relative to the data volume root) where crop images will be
+            written. If not provided, a temporary directory will be used.
+        write_crops_max_workers : int, optional
+            Maximum number of worker threads used to write crops per label. If not
+            provided, a conservative default based on CPU count is used.
+        write_crops_chunk_size : int, optional
+            Chunk size for writing crops per label. Smaller values reduce long blocking
+            calls and can help avoid heartbeat timeouts.
         """
         if not retrain_if_exists and dst_filepath is not None:
             # check if the checkpoint file already exists
@@ -468,52 +570,152 @@ class DeepForestApp:
                 )
                 return
 
-        # TODO: do NOT uncumment the code below until the following commit is released
-        # github.com/weecology/DeepForest/b99d068be36da4d995931d7d4905bce251530a0f
-        # provide a label dict containing all the keys from both the train and test
-        # data frames
-        # labels = set(train_df["label"].unique())
-        # if test_df is not None:
-        #     labels.update(test_df["label"].unique())
-        # label_dict = {label: i for i, label in enumerate(sorted(labels))}
-        # crop_model = deepforest_model.CropModel(
-        #     num_classes=len(label_dict), label_dict=label_dict
-        # )
-        # ACHTUNG: in the meantime (see TODO above), use all the data for training,
-        # namely train and test data frames to ensure that we have all the labels in the
-        # label dict
         # TODO: how to handle the case where not all labels are on the training set?
         # e.g., raise a ValueError?
-        train_df = pd.concat([train_df, test_df]) if test_df is not None else train_df
+        # train_df = pd.concat([train_df, test_df]) if test_df is not None else train_df
         if crop_model_kwargs is None:
             crop_model_kwargs = settings.DEFAULT_CROP_MODEL_KWARGS
-        crop_model = deepforest_model.CropModel(
-            num_classes=train_df["label"].nunique(), **crop_model_kwargs
-        )
+        crop_model = deepforest_model.CropModel(**crop_model_kwargs)
         # create trainer
         if create_trainer_kwargs is None:
-            create_trainer_kwargs = settings.DEFAULT_CREATE_TRAINER_KWARGS
+            create_trainer_kwargs = settings.DEFAULT_CROP_MODEL_CREATE_TRAINER_KWARGS
         crop_model.create_trainer(**create_trainer_kwargs)
 
-        def write_crops(annot_df, dst_dir):
-            crop_model.write_crops(
-                path.join(settings.DATA_DIR, remote_img_dir),
-                annot_df["image_path"].values,
-                annot_df[["xmin", "ymin", "xmax", "ymax"]].values,
-                annot_df["label"].values.astype(str),
-                dst_dir,
-            )
+        def _build_crop_transforms(augmentations):
+            resize_dims = crop_model.config["cropmodel"].get("resize", [224, 224])
+            supported = {
+                "RandomResizedCrop": transforms.RandomResizedCrop,
+                "RandomHorizontalFlip": transforms.RandomHorizontalFlip,
+                "RandomVerticalFlip": transforms.RandomVerticalFlip,
+                "RandomRotation": transforms.RandomRotation,
+                "ColorJitter": transforms.ColorJitter,
+                "RandomAffine": transforms.RandomAffine,
+                "GaussianBlur": transforms.GaussianBlur,
+            }
+            aug_transforms = []
+            aug_names = []
+            for aug in augmentations or []:
+                if not isinstance(aug, Mapping):
+                    raise ValueError(
+                        "Each crop augmentation must be a mapping with a 'name' key."
+                    )
+                name = aug.get("name")
+                if name not in supported:
+                    raise ValueError(
+                        f"Unsupported crop augmentation '{name}'. Supported: "
+                        f"{', '.join(sorted(supported))}."
+                    )
+                kwargs = dict(aug.get("kwargs") or {})
+                if name == "RandomResizedCrop" and "size" not in kwargs:
+                    kwargs["size"] = resize_dims
+                aug_transforms.append(supported[name](**kwargs))
+                aug_names.append(name)
+            if "RandomResizedCrop" not in aug_names:
+                aug_transforms.insert(0, transforms.Resize(resize_dims))
+            aug_transforms.extend([transforms.ToTensor(), crop_model.normalize()])
+            return transforms.Compose(aug_transforms)
 
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            train_dir = path.join(tmp_dir, "train")
-            test_dir = path.join(tmp_dir, "test")
+        def _iter_chunks(df, chunk_size):
+            for start in range(0, len(df), chunk_size):
+                yield df.iloc[start : start + chunk_size]
+
+        def _write_crops_for_label(label_df, dst_dir):
+            label = label_df["_label_str"].iloc[0]
+            total = len(label_df)
+            if not write_crops_chunk_size or total <= write_crops_chunk_size:
+                crop_model.write_crops(
+                    path.join(settings.DATA_DIR, remote_img_dir),
+                    label_df["image_path"].values,
+                    label_df[["xmin", "ymin", "xmax", "ymax"]].values,
+                    label_df["_label_str"].values,
+                    dst_dir,
+                )
+                print(
+                    f"Wrote {total} crops for label '{label}' to {dst_dir}",
+                    flush=True,
+                )
+                return
+            written = 0
+            for chunk_df in _iter_chunks(label_df, write_crops_chunk_size):
+                crop_model.write_crops(
+                    path.join(settings.DATA_DIR, remote_img_dir),
+                    chunk_df["image_path"].values,
+                    chunk_df[["xmin", "ymin", "xmax", "ymax"]].values,
+                    chunk_df["_label_str"].values,
+                    dst_dir,
+                )
+                written += len(chunk_df)
+                print(
+                    f"Wrote {written}/{total} crops for label '{label}' to {dst_dir}",
+                    flush=True,
+                )
+
+        def write_crops(annot_df, dst_dir):
+            labeled_df = annot_df.assign(_label_str=annot_df["label"].astype(str))
+            label_groups = labeled_df.groupby("_label_str", sort=False)
+            if write_crops_max_workers is None:
+                cpu_workers = max(1, (os.cpu_count() or 1) // 2)
+                max_workers = min(label_groups.ngroups, cpu_workers)
+            else:
+                max_workers = max(1, write_crops_max_workers)
+                max_workers = min(max_workers, label_groups.ngroups)
+            print(
+                f"Writing crop images using {max_workers} workers "
+                f"(chunk_size={write_crops_chunk_size})"
+            )
+            if max_workers <= 1:
+                for _, label_df in label_groups:
+                    _write_crops_for_label(label_df, dst_dir)
+            else:
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = [
+                        executor.submit(_write_crops_for_label, label_df, dst_dir)
+                        for _, label_df in label_groups
+                    ]
+                    for future in futures:
+                        future.result()
+            print(f"Written {len(annot_df)} crop images at {dst_dir}")
+
+        if crops_dir is None:
+            tmp_ctx = tempfile.TemporaryDirectory()
+            base_dir = tmp_ctx.name
+        else:
+            _crops_dir = path.normpath(crops_dir)
+            if path.isabs(_crops_dir) or _crops_dir.startswith(".."):
+                raise ValueError("`crops_dir` must be relative to the data volume.")
+            tmp_ctx = nullcontext()
+            base_dir = path.join(settings.DATA_DIR, _crops_dir)
+
+        with tmp_ctx:
+            train_dir = path.join(base_dir, "train")
+            test_dir = path.join(base_dir, "test")
             for _dir in [train_dir, test_dir]:
                 os.makedirs(_dir, exist_ok=True)
             write_crops(train_df, train_dir)
             if test_df is not None:
                 write_crops(test_df, test_dir)
-            crop_model.load_from_disk(train_dir=train_dir, val_dir=test_dir)
+            if crop_augmentations:
+                train_tf = _build_crop_transforms(crop_augmentations)
+                val_tf = _build_crop_transforms(None)
+                crop_model.train_ds, crop_model.val_ds = create_aligned_image_folders(
+                    train_dir,
+                    test_dir,
+                    transform_train=train_tf,
+                    transform_val=val_tf,
+                )
+                crop_model.label_dict = crop_model.train_ds.class_to_idx
+                crop_model.numeric_to_label_dict = {
+                    v: k for k, v in crop_model.label_dict.items()
+                }
+                crop_model.num_classes = len(crop_model.label_dict)
+                if crop_model.model is None:
+                    crop_model.create_model(crop_model.num_classes)
+            else:
+                crop_model.load_from_disk(train_dir=train_dir, val_dir=test_dir)
+            start_time = time.time()
+            print("Started crop model training with config: ", crop_model.config)
             crop_model.trainer.fit(crop_model)
+        print(f"Crop model retrained in {(time.time() - start_time):.2f} seconds.")
 
         # self.model = model
         if dst_filepath is None:

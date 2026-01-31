@@ -1,5 +1,6 @@
 """Utils to process data from the TreeAI Global Initiative."""
 
+import glob
 import os
 import warnings
 from os import path
@@ -11,14 +12,22 @@ import rasterio as rio
 from rasterio.enums import Resampling
 from rasterio.errors import NotGeoreferencedWarning
 from shapely import geometry
-from tqdm.auto import tqdm
+from tqdm import tqdm
 
 # TODO: support further datasets from TreeAI
 DATASET_URL = (
     "https://zenodo.org/records/15351054/files/12_RGB_ObjDet_640_fL.zip?download=1"
 )
-IMG_FORMAT = ".png"
+IMG_FORMAT = "png"
 ANNOT_COLUMNS = ["label", "x_center", "y_center", "width", "height"]
+
+
+def ensure_gt_1px(gdf):
+    """Ensure that boxes are strictly larger than 1 px in each dimension (x and y)."""
+    return gdf[
+        gdf["xmin"].sub(gdf["xmax"]).abs().gt(1)
+        & gdf["ymin"].sub(gdf["ymax"]).abs().gt(1)
+    ]
 
 
 def resize_img(img_filepath: str, resize_factor: float, resampling: int) -> None:
@@ -68,14 +77,15 @@ class UnzipAndResize(pooch.Unzip):
         """Extract the file and resize it if it is an image."""
         super()._extract_file(fname, extract_dir)
         for member in self._all_members(fname):
-            if member.endswith(IMG_FORMAT):
+            if member.endswith(f".{IMG_FORMAT}"):
                 resize_img(
                     path.join(extract_dir, member), self.resize_factor, self.resampling
                 )
 
 
 def get_annot_gdf(
-    *, which: str = "train", resize_factor: float | None = None
+    *,
+    which: str = "train",  # resize_factor: float | None = None
 ) -> tuple[pd.DataFrame, str, dict]:
     """Get the annotations geo-data frame for the specified split (train or validation).
 
@@ -95,22 +105,32 @@ def get_annot_gdf(
     label_dict: dict
         Dictionary mapping label names to integer IDs.
     """
-    if resize_factor is not None:
-        processor = UnzipAndResize(resize_factor=resize_factor)
-    else:
-        processor = pooch.Unzip()
-    filepaths = pooch.retrieve(
-        url=DATASET_URL,
-        known_hash=None,
-        processor=processor,
-        progressbar=True,
+    # if resize_factor is not None:
+    #     processor = UnzipAndResize(resize_factor=resize_factor)
+    # else:
+    #     processor = pooch.Unzip()
+    # filepaths = pooch.retrieve(
+    #     url=DATASET_URL,
+    #     known_hash=None,
+    #     processor=processor,
+    #     progressbar=True,
+    # )
+
+    # base_dir = path.commonprefix(filepaths)
+    # img_dir = path.join(base_dir, which, "images")
+    # filepath_ser = pd.Series([filepath[len(base_dir) :] for filepath in filepaths])
+    # annot_filepath_ser = filepath_ser[filepath_ser.str.split(os.sep).str[-3] == which
+    base_dir = path.join(
+        pooch.os_cache("pooch"),
+        "6072c1c290a688458ffc7f3e0291e0ac-12_RGB_ObjDet_640_fL.zip_0_5_resize.unzip",
+        "12_RGB_ObjDet_640_fL",
     )
-
-    base_dir = path.commonprefix(filepaths)
     img_dir = path.join(base_dir, which, "images")
-    filepath_ser = pd.Series([filepath[len(base_dir) :] for filepath in filepaths])
-
-    annot_filepath_ser = filepath_ser[filepath_ser.str.split(os.sep).str[-3] == which]
+    img_filepaths = glob.glob(path.join(img_dir, f"*.{IMG_FORMAT}"))
+    label_filepaths = glob.glob(
+        path.join(path.join(base_dir, which, "labels"), "*.txt")
+    )
+    annot_filepath_ser = pd.Series(img_filepaths + label_filepaths)
 
     def _process_annot_filepath(annot_filepath):
         img_filename = path.basename(
@@ -179,9 +199,12 @@ def get_annot_gdf(
         ),
     )
 
-    # remove bboxes with zero area - some annotations have the same xmin-xmax or
-    # ymin-ymax, which raises errors when training
-    annot_gdf = annot_gdf[annot_gdf.area != 0]
+    # remove bboxes with zero/or less than a pixel area - some annotations have the same
+    # xmin-xmax or ymin-ymax, which raises errors when training
+    # annot_gdf = annot_gdf[annot_gdf.area != 0]
+    # annot_gdf = annot_gdf[annot_gdf.area.gt(1)]
+    annot_gdf = annot_gdf[annot_gdf["xmax"].sub(annot_gdf["xmin"]).ge(1)]
+    annot_gdf = annot_gdf[annot_gdf["ymax"].sub(annot_gdf["ymin"]).ge(1)]
 
     # return the annotations geo-data frame, the path to the images directory and the
     # label dict
