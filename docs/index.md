@@ -4,9 +4,7 @@ hidden:
 maxdepth: 1
 ---
 
-getting-started
-advanced-customizations
-crop-model
+user-guide
 api
 contributing
 changelog
