@@ -4,7 +4,9 @@ hidden:
 maxdepth: 1
 ---
 
-treeai-example
+getting-started
+advanced-customizations
+crop-model
 api
 contributing
 changelog

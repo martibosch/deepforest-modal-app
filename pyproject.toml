@@ -69,7 +69,8 @@ user-guide = [
 Repository = "https://github.com/martibosch/deepforest-modal-app"
 
 [tool.codespell]
-skip = "CHANGELOG.md,pixi.lock,docs/treeai-example.ipynb"
+ignore-regex = '^\s*"image\/png":\s.*'
+skip = "CHANGELOG.md,pixi.lock"
 
 [tool.commitizen]
 major_version_zero = true
@@ -151,6 +152,12 @@ known-first-party = [
 [tool.ruff.lint.per-file-ignores]
 "**/__init__.py" = [
   "F401"
+]
+# ignore because we are mostly hard-copying from DeepForest
+"deepforest_modal_app/eval_utils.py" = [
+  "D205",
+  "D400",
+  "D401"
 ]
 "docs/*.py" = [
   "D"
