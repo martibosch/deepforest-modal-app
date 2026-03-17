@@ -59,6 +59,7 @@ class Args:
 
     # eval
     iou_threshold: float = 0.4  # IoU threshold for evaluation matching
+    score_threshold: float = 0.3  # minimum confidence score for predictions
 
     # output
     output_dir: str = "checkpoints"  # where to save checkpoints
@@ -102,6 +103,7 @@ def evaluate_model(
     val_gdf: gpd.GeoDataFrame,
     val_img_dir: str,
     iou_threshold: float,
+    score_threshold: float = 0.0,
 ) -> tuple[dict, gpd.GeoDataFrame | None]:
     """Run prediction on val images and compute box precision/recall/F1.
 
@@ -122,6 +124,10 @@ def evaluate_model(
         return {"box_precision": 0.0, "box_recall": 0.0, "box_f1": 0.0}, None
 
     pred_gdf = gpd.GeoDataFrame(pd.concat(all_preds, ignore_index=True))
+    if score_threshold > 0.0 and "score" in pred_gdf.columns:
+        pred_gdf = pred_gdf[pred_gdf["score"] >= score_threshold].reset_index(drop=True)
+    if len(pred_gdf) == 0:
+        return {"box_precision": 0.0, "box_recall": 0.0, "box_f1": 0.0}, None
     if "geometry" not in pred_gdf.columns:
         from shapely import geometry
 
@@ -281,7 +287,7 @@ def main():
 
     # --- evaluate before training ---
     console.rule("Pre-training evaluation")
-    pre_metrics, _ = evaluate_model(model, val_crown, val_img_dir, args.iou_threshold)
+    pre_metrics, _ = evaluate_model(model, val_crown, val_img_dir, args.iou_threshold, args.score_threshold)
     console.print(Panel(
         f"Precision: {pre_metrics['box_precision']:.4f}\n"
         f"Recall:    {pre_metrics['box_recall']:.4f}\n"
@@ -344,7 +350,7 @@ def main():
 
     # --- evaluate after training ---
     console.rule("Post-training evaluation")
-    post_metrics, post_pred_gdf = evaluate_model(model, val_crown, val_img_dir, args.iou_threshold)
+    post_metrics, post_pred_gdf = evaluate_model(model, val_crown, val_img_dir, args.iou_threshold, args.score_threshold)
     console.print(Panel(
         f"Precision: {post_metrics['box_precision']:.4f}\n"
         f"Recall:    {post_metrics['box_recall']:.4f}\n"
