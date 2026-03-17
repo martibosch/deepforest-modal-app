@@ -32,7 +32,7 @@ class Args:
     # data
     base_dir: str = "/mnt/new-pvc/datasets/treeai/12_RGB_ObjDet_640_fL"  # path to TreeAI dataset
     target_species: list[str] = field(
-        default_factory=lambda: ["picea abies", "pinus sylvestris", "fagus sylvatica"]
+        default_factory=list  # empty = use all species
     )
 
     # model
@@ -77,11 +77,12 @@ def load_treeai_data(
     sys.path.insert(0, "docs")
     import treeai_utils
 
+    species_filter = target_species if target_species else None
     train_gdf, train_img_dir, label_dict = treeai_utils.get_annot_gdf(
-        base_dir, which="train", species=target_species
+        base_dir, which="train", species=species_filter
     )
     val_gdf, val_img_dir, _ = treeai_utils.get_annot_gdf(
-        base_dir, which="val", species=target_species
+        base_dir, which="val", species=species_filter
     )
     train_gdf = treeai_utils.ensure_gt_1px(train_gdf)
     val_gdf = treeai_utils.ensure_gt_1px(val_gdf)
