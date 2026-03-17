@@ -91,6 +91,7 @@ def get_augmentations() -> list[dict]:
         {"HorizontalFlip": {"p": 0.5}},
         {"VerticalFlip": {"p": 0.5}},
         {"Rotate": {"degrees": 45, "p": 0.5}},
+        {"RandomResizedCrop": {"size": [640, 640], "scale": [0.5, 1.0], "ratio": [1.0, 1.0], "p": 0.5}},
         {"RandomBrightnessContrast": {"brightness": 0.2, "contrast": 0.2, "p": 0.5}},
         {"HueSaturationValue": {"hue": 0.1, "saturation": 0.1, "p": 0.5}},
         {"GaussNoise": {"std": 0.05, "p": 0.2}},
