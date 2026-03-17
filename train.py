@@ -1,5 +1,8 @@
 """Train/fine-tune a DeepForest tree crown detection model locally with wandb logging."""
 
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -17,7 +20,7 @@ from pytorch_lightning.loggers import WandbLogger
 from rich.console import Console
 from rich.panel import Panel
 
-from deepforest_modal_app import eval_utils
+from deepforest_modal_app import eval_utils, plot_utils
 
 console = Console()
 
@@ -99,8 +102,12 @@ def evaluate_model(
     val_gdf: gpd.GeoDataFrame,
     val_img_dir: str,
     iou_threshold: float,
-) -> dict:
-    """Run prediction on val images and compute box precision/recall/F1."""
+) -> tuple[dict, gpd.GeoDataFrame | None]:
+    """Run prediction on val images and compute box precision/recall/F1.
+
+    Returns a (metrics dict, pred_gdf) tuple; pred_gdf is None when the model
+    makes no predictions.
+    """
     val_img_filenames = val_gdf["image_path"].unique()
     crown_annot_gdf = val_gdf.assign(label="Tree")
 
@@ -112,7 +119,7 @@ def evaluate_model(
         all_preds.append(pred_gdf)
 
     if not all_preds:
-        return {"box_precision": 0.0, "box_recall": 0.0, "box_f1": 0.0}
+        return {"box_precision": 0.0, "box_recall": 0.0, "box_f1": 0.0}, None
 
     pred_gdf = gpd.GeoDataFrame(pd.concat(all_preds, ignore_index=True))
     if "geometry" not in pred_gdf.columns:
@@ -144,7 +151,75 @@ def evaluate_model(
         "n_predictions": len(pred_gdf),
         "n_ground_truth": len(crown_annot_gdf),
         "n_images": len(val_img_filenames),
-    }
+    }, pred_gdf
+
+
+def log_visualizations(
+    pred_gdf: gpd.GeoDataFrame | None,
+    val_gdf: gpd.GeoDataFrame,
+    val_img_dir: str,
+    iou_threshold: float,
+    n_images: int = 8,
+    seed: int = 0,
+) -> None:
+    """Log side-by-side annotation vs prediction plots to a wandb.Table.
+
+    Images are chosen deterministically using *seed* so the same tiles are
+    shown across all experiments, making runs directly comparable.
+    """
+    crown_annot_gdf = val_gdf.assign(label="Tree")
+    all_img_filenames = val_gdf["image_path"].unique()
+
+    rng = np.random.default_rng(seed)
+    selected = rng.choice(all_img_filenames, size=min(n_images, len(all_img_filenames)), replace=False)
+
+    # empty GeoDataFrame used when the model produced no predictions
+    empty_pred = gpd.GeoDataFrame(columns=["image_path", "geometry", "label"])
+
+    table = wandb.Table(
+        columns=["image_path", "visualization", "n_ground_truth", "n_predictions",
+                 "box_precision", "box_recall", "box_f1"]
+    )
+
+    for img_filename in selected:
+        img_annot = crown_annot_gdf[crown_annot_gdf["image_path"] == img_filename]
+        img_pred = (
+            pred_gdf[pred_gdf["image_path"] == img_filename]
+            if pred_gdf is not None and len(pred_gdf) > 0
+            else empty_pred
+        )
+
+        # per-image precision / recall / F1
+        if len(img_pred) > 0 and len(img_annot) > 0:
+            img_results = eval_utils.evaluate_geometry(
+                img_pred, img_annot, iou_threshold=iou_threshold
+            )
+            bp = float(img_results["box_precision"])
+            br = float(img_results["box_recall"])
+        else:
+            bp = br = 0.0
+        bf1 = 0.0 if (bp + br) == 0 else 2 * bp * br / (bp + br)
+
+        fig = plot_utils.plot_annot_vs_pred(
+            img_pred,
+            img_annot,
+            val_img_dir,
+            plot_pred_kwargs={"legend": False, "column": None},
+            plot_annot_kwargs={"legend": False, "column": None},
+        )
+        table.add_data(
+            img_filename,
+            wandb.Image(fig),
+            len(img_annot),
+            len(img_pred),
+            round(bp, 4),
+            round(br, 4),
+            round(bf1, 4),
+        )
+        plt.close(fig)
+
+    wandb.log({"post_train/visualizations": table})
+    console.print(f"Logged {len(selected)} visualization(s) to wandb")
 
 
 def main():
@@ -206,7 +281,7 @@ def main():
 
     # --- evaluate before training ---
     console.rule("Pre-training evaluation")
-    pre_metrics = evaluate_model(model, val_crown, val_img_dir, args.iou_threshold)
+    pre_metrics, _ = evaluate_model(model, val_crown, val_img_dir, args.iou_threshold)
     console.print(Panel(
         f"Precision: {pre_metrics['box_precision']:.4f}\n"
         f"Recall:    {pre_metrics['box_recall']:.4f}\n"
@@ -269,7 +344,7 @@ def main():
 
     # --- evaluate after training ---
     console.rule("Post-training evaluation")
-    post_metrics = evaluate_model(model, val_crown, val_img_dir, args.iou_threshold)
+    post_metrics, post_pred_gdf = evaluate_model(model, val_crown, val_img_dir, args.iou_threshold)
     console.print(Panel(
         f"Precision: {post_metrics['box_precision']:.4f}\n"
         f"Recall:    {post_metrics['box_recall']:.4f}\n"
@@ -277,6 +352,15 @@ def main():
         title="Post-training metrics",
     ))
     wandb.log({"post_train/" + k: v for k, v in post_metrics.items()})
+
+    # --- visualizations ---
+    console.rule("Logging visualizations")
+    log_visualizations(
+        post_pred_gdf, val_crown, val_img_dir,
+        iou_threshold=args.iou_threshold,
+        n_images=8,
+        seed=args.seed,
+    )
 
     # --- summary ---
     console.rule("Summary")
