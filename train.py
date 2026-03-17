@@ -42,7 +42,7 @@ class Args:
     batch_size: int = 4
     lr: float = 1e-4
     workers: int = 4
-    precision: str = "bf16-mixed"
+    precision: str = "32"
     accumulate_grad_batches: int = 4
     val_accuracy_interval: int = 5
     seed: int = 0
@@ -106,12 +106,10 @@ def evaluate_model(
 
     # predict on each tile
     all_preds = []
-    for img_filename in val_img_filenames:
-        img_path = path.join(val_img_dir, img_filename)
-        pred = model.predict_image(img_path)
-        if pred is not None and len(pred) > 0:
-            pred["image_path"] = img_filename
-            all_preds.append(pred)
+    img_paths = [path.join(val_img_dir, f) for f in val_img_filenames]
+    pred_gdf = model.predict_tile(img_paths)
+    if pred_gdf is not None and len(pred_gdf) > 0:
+        all_preds.append(pred_gdf)
 
     if not all_preds:
         return {"box_precision": 0.0, "box_recall": 0.0, "box_f1": 0.0}
@@ -203,7 +201,8 @@ def main():
 
     # --- wandb ---
     console.rule("Initializing wandb")
-    wandb_logger = WandbLogger(project=args.project, config=vars(args))
+    wandb.init(project=args.project, config=vars(args))
+    wandb_logger = WandbLogger(experiment=wandb.run)
 
     # --- evaluate before training ---
     console.rule("Pre-training evaluation")
