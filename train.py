@@ -60,6 +60,8 @@ class Args:
     # eval
     iou_threshold: float = 0.4  # IoU threshold for evaluation matching
     score_threshold: float = 0.3  # minimum confidence score for predictions
+    patch_size: int = 640  # predict_tile patch size (=image size = no tiling)
+    nms_threshold: float = 0.15  # NMS threshold for predict_tile
 
     # output
     output_dir: str = "checkpoints"  # where to save checkpoints
@@ -105,6 +107,8 @@ def evaluate_model(
     val_img_dir: str,
     iou_threshold: float,
     score_threshold: float = 0.0,
+    patch_size: int = 640,
+    nms_threshold: float = 0.15,
 ) -> tuple[dict, gpd.GeoDataFrame | None]:
     """Run prediction on val images and compute box precision/recall/F1.
 
@@ -117,7 +121,7 @@ def evaluate_model(
     # predict on each tile
     all_preds = []
     img_paths = [path.join(val_img_dir, f) for f in val_img_filenames]
-    pred_gdf = model.predict_tile(img_paths)
+    pred_gdf = model.predict_tile(img_paths, patch_size=patch_size, iou_threshold=nms_threshold)
     if pred_gdf is not None and len(pred_gdf) > 0:
         all_preds.append(pred_gdf)
 
@@ -288,7 +292,7 @@ def main():
 
     # --- evaluate before training ---
     console.rule("Pre-training evaluation")
-    pre_metrics, _ = evaluate_model(model, val_crown, val_img_dir, args.iou_threshold, args.score_threshold)
+    pre_metrics, _ = evaluate_model(model, val_crown, val_img_dir, args.iou_threshold, args.score_threshold, args.patch_size, args.nms_threshold)
     console.print(Panel(
         f"Precision: {pre_metrics['box_precision']:.4f}\n"
         f"Recall:    {pre_metrics['box_recall']:.4f}\n"
@@ -351,7 +355,7 @@ def main():
 
     # --- evaluate after training ---
     console.rule("Post-training evaluation")
-    post_metrics, post_pred_gdf = evaluate_model(model, val_crown, val_img_dir, args.iou_threshold, args.score_threshold)
+    post_metrics, post_pred_gdf = evaluate_model(model, val_crown, val_img_dir, args.iou_threshold, args.score_threshold, args.patch_size, args.nms_threshold)
     console.print(Panel(
         f"Precision: {post_metrics['box_precision']:.4f}\n"
         f"Recall:    {post_metrics['box_recall']:.4f}\n"
