@@ -263,7 +263,7 @@ def main():
     config_args = {
         "batch_size": args.batch_size,
         "workers": args.workers,
-        "nms_thresh": 0.5,   # raise from 0.05 default to allow more overlapping predictions
+        "nms_thresh": 0.6,   # raise from 0.05 default to allow more overlapping predictions
         "train": {
             "lr": args.lr,
             "preload_images": True,
