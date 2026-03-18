@@ -43,7 +43,7 @@ class Args:
     # training
     max_epochs: int = 200
     batch_size: int = 4
-    lr: float = 1e-4
+    lr: float = 5e-5
     workers: int = 4
     precision: str = "32"
     accumulate_grad_batches: int = 4
@@ -262,7 +262,6 @@ def main():
         "train": {
             "lr": args.lr,
             "preload_images": True,
-            "scheduler": {"type": "cosine"},
         },
         "validation": {
             "preload_images": True,
