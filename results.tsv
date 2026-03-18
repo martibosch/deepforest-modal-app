@@ -42,3 +42,4 @@ f2642cb	0.7087	0.7713	0.6556	discard	lr=5e-5 200ep no-aug: didn't converge, peak
 941d4cb	0.7172	0.7733	0.6686	keep	fine-tune from ep=179 ckpt lr=1e-5: marginal gain
 ed41616	0.7159	0.7733	0.6664	discard	flips-only 200ep: no-aug is better even at 200 epochs
 03e0262	0.7198	0.7728	0.6736	keep	300ep no-aug min_delta=0 patience=30: ReduceLROnPlateau kicked in at end
+8aebb37	0.7200	0.7730	0.6738	keep	500ep no-aug min_delta=0 patience=50: converged ep=303, marginal gain
