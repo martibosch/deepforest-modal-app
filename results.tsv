@@ -40,3 +40,4 @@ cceb540	0.6837	0.7551	0.6246	keep	score_threshold=0.3 + nms_thresh=0.8: new best
 b98f3ce	0.7119	0.7705	0.6616	discard	cosine LR 200ep no-aug: didn't converge, worse than ReduceLROnPlateau
 f2642cb	0.7087	0.7713	0.6556	discard	lr=5e-5 200ep no-aug: didn't converge, peak LR is 1e-4
 941d4cb	0.7172	0.7733	0.6686	keep	fine-tune from ep=179 ckpt lr=1e-5: marginal gain
+ed41616	0.7159	0.7733	0.6664	discard	flips-only 200ep: no-aug is better even at 200 epochs
