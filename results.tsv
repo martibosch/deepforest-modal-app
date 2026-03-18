@@ -38,3 +38,4 @@ cceb540	0.6837	0.7551	0.6246	keep	score_threshold=0.3 + nms_thresh=0.8: new best
 960dec8	0.7164	0.7714	0.6686	keep	200 epochs no-aug patience=20: converged at ep=183
 4ff9e5e	0.7089	0.7416	0.6789	discard	score_threshold=0.25 with 200ep no-aug: peak is 0.3
 b98f3ce	0.7119	0.7705	0.6616	discard	cosine LR 200ep no-aug: didn't converge, worse than ReduceLROnPlateau
+f2642cb	0.7087	0.7713	0.6556	discard	lr=5e-5 200ep no-aug: didn't converge, peak LR is 1e-4
