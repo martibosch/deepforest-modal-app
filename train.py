@@ -51,7 +51,7 @@ class Args:
     seed: int = 0
 
     # augmentations
-    use_augmentations: bool = True
+    use_augmentations: bool = False
 
     # early stopping
     patience: int = 10
