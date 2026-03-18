@@ -35,3 +35,4 @@ cceb540	0.6837	0.7551	0.6246	keep	score_threshold=0.3 + nms_thresh=0.8: new best
 8c5fba9	0.7015	0.7588	0.6523	keep	flips-only augmentation: less is more
 291856b	0.7048	0.7593	0.6577	keep	no augmentations: marginal improvement
 05b6873	0.7105	0.7699	0.6596	keep	100 epochs no-aug: new best (not converged at ep=99)
+960dec8	0.7164	0.7714	0.6686	keep	200 epochs no-aug patience=20: converged at ep=183
