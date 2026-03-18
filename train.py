@@ -59,7 +59,7 @@ class Args:
 
     # eval
     iou_threshold: float = 0.4  # IoU threshold for evaluation matching
-    score_threshold: float = 0.25  # minimum confidence score for predictions
+    score_threshold: float = 0.3  # minimum confidence score for predictions
     patch_size: int = 640  # predict_tile patch size (=image size = no tiling)
     nms_threshold: float = 0.15  # NMS threshold for predict_tile
 
@@ -262,6 +262,7 @@ def main():
         "train": {
             "lr": args.lr,
             "preload_images": True,
+            "scheduler": {"type": "cosine"},
         },
         "validation": {
             "preload_images": True,
