@@ -38,12 +38,12 @@ class Args:
     # model
     model_name: str = "weecology/deepforest-tree"  # HF model to fine-tune
     model_revision: str = "main"  # HF model revision
-    checkpoint: str | None = None  # resume from local checkpoint
+    checkpoint: str | None = "checkpoints/deepforest-epoch=179-box_recall=0.734.ckpt"  # resume from local checkpoint
 
     # training
-    max_epochs: int = 200
+    max_epochs: int = 50
     batch_size: int = 4
-    lr: float = 5e-5
+    lr: float = 1e-5
     workers: int = 4
     precision: str = "32"
     accumulate_grad_batches: int = 4
@@ -54,7 +54,7 @@ class Args:
     use_augmentations: bool = False
 
     # early stopping
-    patience: int = 20
+    patience: int = 10
     min_delta: float = 0.002
 
     # eval
@@ -272,10 +272,11 @@ def main():
         config_args["train"]["augmentations"] = get_augmentations()
 
     if args.checkpoint:
-        model = deepforest_main.deepforest.load_from_checkpoint(
-            args.checkpoint, config_args=config_args
-        )
-        console.print(f"Loaded checkpoint: {args.checkpoint}")
+        model = deepforest_main.deepforest(config_args=config_args)
+        model.load_model(model_name=args.model_name, revision=args.model_revision)
+        ckpt = torch.load(args.checkpoint, map_location="cpu")
+        model.load_state_dict(ckpt["state_dict"])
+        console.print(f"Loaded checkpoint weights: {args.checkpoint}")
     else:
         model = deepforest_main.deepforest(config_args=config_args)
         model.load_model(model_name=args.model_name, revision=args.model_revision)
