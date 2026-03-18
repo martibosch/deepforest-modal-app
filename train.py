@@ -41,7 +41,7 @@ class Args:
     checkpoint: str | None = None  # resume from local checkpoint
 
     # training
-    max_epochs: int = 200
+    max_epochs: int = 300
     batch_size: int = 4
     lr: float = 1e-4
     workers: int = 4
@@ -51,11 +51,11 @@ class Args:
     seed: int = 0
 
     # augmentations
-    use_augmentations: bool = True
+    use_augmentations: bool = False
 
     # early stopping
-    patience: int = 20
-    min_delta: float = 0.002
+    patience: int = 30
+    min_delta: float = 0.0
 
     # eval
     iou_threshold: float = 0.4  # IoU threshold for evaluation matching
