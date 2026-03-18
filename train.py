@@ -41,7 +41,7 @@ class Args:
     checkpoint: str | None = None  # resume from local checkpoint
 
     # training
-    max_epochs: int = 50
+    max_epochs: int = 100
     batch_size: int = 4
     lr: float = 1e-4
     workers: int = 4
@@ -54,7 +54,7 @@ class Args:
     use_augmentations: bool = False
 
     # early stopping
-    patience: int = 10
+    patience: int = 15
     min_delta: float = 0.002
 
     # eval
