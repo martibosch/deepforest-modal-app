@@ -258,7 +258,7 @@ def main():
     config_args = {
         "batch_size": args.batch_size,
         "workers": args.workers,
-        "nms_thresh": 0.8,   # raise from 0.05 default to allow more overlapping predictions
+        "nms_thresh": 0.75,  # test if 0.75 is better than 0.8 at 300+ epoch convergence
         "train": {
             "lr": args.lr,
             "preload_images": True,
