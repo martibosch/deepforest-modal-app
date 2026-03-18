@@ -38,12 +38,12 @@ class Args:
     # model
     model_name: str = "weecology/deepforest-tree"  # HF model to fine-tune
     model_revision: str = "main"  # HF model revision
-    checkpoint: str | None = "checkpoints/deepforest-epoch=179-box_recall=0.734.ckpt"  # resume from local checkpoint
+    checkpoint: str | None = None  # resume from local checkpoint
 
     # training
-    max_epochs: int = 50
+    max_epochs: int = 200
     batch_size: int = 4
-    lr: float = 1e-5
+    lr: float = 1e-4
     workers: int = 4
     precision: str = "32"
     accumulate_grad_batches: int = 4
@@ -51,10 +51,10 @@ class Args:
     seed: int = 0
 
     # augmentations
-    use_augmentations: bool = False
+    use_augmentations: bool = True
 
     # early stopping
-    patience: int = 10
+    patience: int = 20
     min_delta: float = 0.002
 
     # eval
