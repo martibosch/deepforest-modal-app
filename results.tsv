@@ -43,3 +43,4 @@ f2642cb	0.7087	0.7713	0.6556	discard	lr=5e-5 200ep no-aug: didn't converge, peak
 ed41616	0.7159	0.7733	0.6664	discard	flips-only 200ep: no-aug is better even at 200 epochs
 03e0262	0.7198	0.7728	0.6736	keep	300ep no-aug min_delta=0 patience=30: ReduceLROnPlateau kicked in at end
 8aebb37	0.7200	0.7730	0.6738	keep	500ep no-aug min_delta=0 patience=50: converged ep=303, marginal gain
+6cdd800	0.7154	0.7651	0.6718	discard	nms_thresh=0.75: 0.8 is still optimal at long training
