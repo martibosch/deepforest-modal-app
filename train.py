@@ -1,14 +1,15 @@
 """Train/fine-tune a DeepForest tree crown detection model locally with wandb logging."""
 
 import matplotlib
+
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import tempfile
 import time
 from dataclasses import dataclass, field
 from os import path
 
 import geopandas as gpd
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import simple_parsing as sp
@@ -30,7 +31,9 @@ class Args:
     """DeepForest crown detection training configuration."""
 
     # data
-    base_dir: str = "/mnt/new-pvc/datasets/treeai/12_RGB_ObjDet_640_fL"  # path to TreeAI dataset
+    base_dir: str = (
+        "/mnt/new-pvc/datasets/treeai/12_RGB_ObjDet_640_fL"  # path to TreeAI dataset
+    )
     target_species: list[str] = field(
         default_factory=list  # empty = use all species
     )
@@ -116,7 +119,9 @@ def evaluate_model(
     # predict on each tile
     all_preds = []
     img_paths = [path.join(val_img_dir, f) for f in val_img_filenames]
-    pred_gdf = model.predict_tile(img_paths, patch_size=patch_size, iou_threshold=nms_threshold)
+    pred_gdf = model.predict_tile(
+        img_paths, patch_size=patch_size, iou_threshold=nms_threshold
+    )
     if pred_gdf is not None and len(pred_gdf) > 0:
         all_preds.append(pred_gdf)
 
@@ -177,14 +182,23 @@ def log_visualizations(
     all_img_filenames = val_gdf["image_path"].unique()
 
     rng = np.random.default_rng(seed)
-    selected = rng.choice(all_img_filenames, size=min(n_images, len(all_img_filenames)), replace=False)
+    selected = rng.choice(
+        all_img_filenames, size=min(n_images, len(all_img_filenames)), replace=False
+    )
 
     # empty GeoDataFrame used when the model produced no predictions
     empty_pred = gpd.GeoDataFrame(columns=["image_path", "geometry", "label"])
 
     table = wandb.Table(
-        columns=["image_path", "visualization", "n_ground_truth", "n_predictions",
-                 "box_precision", "box_recall", "box_f1"]
+        columns=[
+            "image_path",
+            "visualization",
+            "n_ground_truth",
+            "n_predictions",
+            "box_precision",
+            "box_recall",
+            "box_f1",
+        ]
     )
 
     for img_filename in selected:
@@ -289,13 +303,23 @@ def main():
 
     # --- evaluate before training ---
     console.rule("Pre-training evaluation")
-    pre_metrics, _ = evaluate_model(model, val_crown, val_img_dir, args.iou_threshold, args.score_threshold, args.patch_size, args.nms_threshold)
-    console.print(Panel(
-        f"Precision: {pre_metrics['box_precision']:.4f}\n"
-        f"Recall:    {pre_metrics['box_recall']:.4f}\n"
-        f"F1:        {pre_metrics['box_f1']:.4f}",
-        title="Pre-training metrics",
-    ))
+    pre_metrics, _ = evaluate_model(
+        model,
+        val_crown,
+        val_img_dir,
+        args.iou_threshold,
+        args.score_threshold,
+        args.patch_size,
+        args.nms_threshold,
+    )
+    console.print(
+        Panel(
+            f"Precision: {pre_metrics['box_precision']:.4f}\n"
+            f"Recall:    {pre_metrics['box_recall']:.4f}\n"
+            f"F1:        {pre_metrics['box_f1']:.4f}",
+            title="Pre-training metrics",
+        )
+    )
     wandb.log({"pre_train/" + k: v for k, v in pre_metrics.items()})
 
     # --- train ---
@@ -352,19 +376,31 @@ def main():
 
     # --- evaluate after training ---
     console.rule("Post-training evaluation")
-    post_metrics, post_pred_gdf = evaluate_model(model, val_crown, val_img_dir, args.iou_threshold, args.score_threshold, args.patch_size, args.nms_threshold)
-    console.print(Panel(
-        f"Precision: {post_metrics['box_precision']:.4f}\n"
-        f"Recall:    {post_metrics['box_recall']:.4f}\n"
-        f"F1:        {post_metrics['box_f1']:.4f}",
-        title="Post-training metrics",
-    ))
+    post_metrics, post_pred_gdf = evaluate_model(
+        model,
+        val_crown,
+        val_img_dir,
+        args.iou_threshold,
+        args.score_threshold,
+        args.patch_size,
+        args.nms_threshold,
+    )
+    console.print(
+        Panel(
+            f"Precision: {post_metrics['box_precision']:.4f}\n"
+            f"Recall:    {post_metrics['box_recall']:.4f}\n"
+            f"F1:        {post_metrics['box_f1']:.4f}",
+            title="Post-training metrics",
+        )
+    )
     wandb.log({"post_train/" + k: v for k, v in post_metrics.items()})
 
     # --- visualizations ---
     console.rule("Logging visualizations")
     log_visualizations(
-        post_pred_gdf, val_crown, val_img_dir,
+        post_pred_gdf,
+        val_crown,
+        val_img_dir,
         iou_threshold=args.iou_threshold,
         n_images=8,
         seed=args.seed,
@@ -383,11 +419,13 @@ def main():
     )
     console.print(Panel(summary, title="Results"))
 
-    wandb.summary.update({
-        "train_duration_s": train_duration,
-        "best_checkpoint": checkpoint_callback.best_model_path or final_ckpt,
-        **{f"final/{k}": v for k, v in post_metrics.items()},
-    })
+    wandb.summary.update(
+        {
+            "train_duration_s": train_duration,
+            "best_checkpoint": checkpoint_callback.best_model_path or final_ckpt,
+            **{f"final/{k}": v for k, v in post_metrics.items()},
+        }
+    )
     wandb.finish()
 
 
